@@ -108,13 +108,13 @@ do {								\
 
 #else
 
-#include <linux/string.h>
 #include <linux/errno.h>
 
 /*
- * linux/string.h can be only partially parsed here because of the
- * x86 string -> jump_label -> printk -> dynamic_debug include cycle.
+ * Avoid linux/string.h here because on x86 it causes an include cycle:
+ * string.h -> asm/string.h -> jump_label.h before WARN() is defined.
  */
+
 extern char *strstr(const char *, const char *);
 
 static inline int ddebug_remove_module(const char *mod)
