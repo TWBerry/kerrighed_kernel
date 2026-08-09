@@ -661,6 +661,8 @@ bpf_jit_binary_alloc(unsigned int proglen, u8 **image_ptr,
 		     bpf_jit_fill_hole_t bpf_fill_ill_insns);
 void bpf_jit_binary_free(struct bpf_binary_header *hdr);
 
+void trace_bpf_jit_free(struct bpf_prog *fp);
+
 #ifdef CONFIG_BPF_JIT
 #include <stdarg.h>
 #include <linux/linkage.h>
@@ -672,7 +674,7 @@ extern int bpf_jit_kallsyms;
 void bpf_jit_compile(struct sk_filter *fp);
 void bpf_jit_free(struct sk_filter *fp);
 
-void trace_bpf_jit_free(struct bpf_prog *fp);
+//void trace_bpf_jit_free(struct bpf_prog *fp);
 
 struct bpf_prog *trace_bpf_int_jit_compile(struct bpf_prog *prog);
 
