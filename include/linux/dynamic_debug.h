@@ -111,6 +111,12 @@ do {								\
 #include <linux/string.h>
 #include <linux/errno.h>
 
+/*
+ * linux/string.h can be only partially parsed here because of the
+ * x86 string -> jump_label -> printk -> dynamic_debug include cycle.
+ */
+extern char *strstr(const char *, const char *);
+
 static inline int ddebug_remove_module(const char *mod)
 {
 	return 0;
