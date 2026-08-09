@@ -390,6 +390,11 @@ static inline struct page *trans_huge_page_release_decode(struct page *page)
 	return page;
 }
 
+static inline int trans_huge_mmu_gather_count(struct page *page)
+{
+        return 0;
+}
+
 extern void dec_trans_huge_mmu_gather_count(struct page *page);
 extern bool is_huge_zero_page_release(struct page *page);
 
