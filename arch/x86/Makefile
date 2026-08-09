@@ -159,12 +159,8 @@ KBUILD_AFLAGS += $(mflags-y)
 
 # Avoid indirect branches in kernel to deal with Spectre
 ifdef CONFIG_RETPOLINE
-    RETPOLINE_CFLAGS += $(call cc-option,-mindirect-branch=thunk-extern -mindirect-branch-register)
-    ifneq ($(RETPOLINE_CFLAGS),)
-        KBUILD_CFLAGS += $(RETPOLINE_CFLAGS) -DRETPOLINE
-    else
-        $(error CONFIG_RETPOLINE=y, but not supported by the compiler. Compiler update recommended.)
-    endif
+    RETPOLINE_CFLAGS := -mindirect-branch=thunk-extern -mindirect-branch-register
+    KBUILD_CFLAGS += $(RETPOLINE_CFLAGS) -DRETPOLINE
 endif
 
 archscripts: scripts_basic
