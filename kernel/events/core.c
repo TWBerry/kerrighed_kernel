@@ -991,7 +991,7 @@ static inline u64 perf_cgroup_event_time(struct perf_event *event)
 	return 0;
 }
 
-static inline void
+//static inline void
 #endif
 
 /*
