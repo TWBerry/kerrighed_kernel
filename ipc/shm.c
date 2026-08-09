@@ -1021,7 +1021,7 @@ static int shmctl_nolock(struct ipc_namespace *ns, int shmid,
 			}
 			result = shp->shm_perm.id;
 		} else {
-			shp = shm_lock_check(ns, shmid);
+			shp = shm_obtain_object_check(ns, shmid);
 			if (IS_ERR(shp)) {
 				err = PTR_ERR(shp);
 				goto out_unlock;

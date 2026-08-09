@@ -1083,9 +1083,6 @@ long do_msgrcv(int msqid, void __user *buf, size_t bufsz, long msgtyp, int msgfl
 			atomic_dec(&ns->msg_hdrs);
 			ss_wakeup(&msq->q_senders, 0);
 			goto out_unlock0;
---#ifdef CONFIG_KRG_IPC
---			up_read(&msg_ids(ns).rwsem);
---#endif
 		}
 		/* No message waiting. Wait for a message */
 		if (msgflg & IPC_NOWAIT) {
