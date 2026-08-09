@@ -2620,6 +2620,7 @@ static void ack_apic_level(struct irq_data *data)
 	 * RHEL-only: clear IRR bit in IO_APIC manually for Hyper-V Gen1 on irq
 	 * migration.
 	 */
+#ifdef CONFIG_HYPERVISOR_GUEST
 	if (unlikely(masked && x86_hyper == &x86_hyper_ms_hyperv)) {
 		unsigned long flags;
 
@@ -2627,7 +2628,7 @@ static void ack_apic_level(struct irq_data *data)
 		io_apic_modify_irq(cfg, ~IO_APIC_REDIR_REMOTE_IRR, 0, &io_apic_sync);
 		raw_spin_unlock_irqrestore(&ioapic_lock, flags);
 	}
-
+#endif
 	ioapic_irqd_unmask(data, cfg, masked);
 }
 
