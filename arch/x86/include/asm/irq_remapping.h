@@ -35,6 +35,11 @@ enum irq_remap_cap {
 	IRQ_POSTING_CAP = 0,
 };
 
+enum {
+	IRQ_REMAP_XAPIC_MODE,
+	IRQ_REMAP_X2APIC_MODE,
+};
+
 #ifdef CONFIG_IRQ_REMAP
 
 extern raw_spinlock_t irq_2_ir_lock;
@@ -63,11 +68,6 @@ extern bool setup_remapped_irq(int irq,
 
 void irq_remap_modify_chip_defaults(struct irq_chip *chip);
 static inline int irq_set_vcpu_affinity(unsigned int irq, void *vcpu_info);
-
-enum {
-	IRQ_REMAP_XAPIC_MODE,
-	IRQ_REMAP_X2APIC_MODE,
-};
 
 struct vcpu_data {
 	u64 pi_desc_addr;	/* Physical address of PI Descriptor */
