@@ -65,9 +65,12 @@ struct shm_file_data {
 static
 #endif
 const struct file_operations shm_file_operations_huge;
-const struct file_operations shm_file_operations;
 #ifndef CONFIG_KRG_IPC
 static
+#endif
+const struct file_operations shm_file_operations;
+#ifndef CONFIG_KRG_IPC
+static const
 #endif
 struct vm_operations_struct shm_vm_ops;
 
@@ -189,7 +192,7 @@ struct shmid_kernel *shm_lock(struct ipc_namespace *ns, int id)
 #ifndef CONFIG_KRG_IPC
 static inline
 #endif
-static inline void shm_lock_by_ptr(struct shmid_kernel *ipcp)
+void shm_lock_by_ptr(struct shmid_kernel *ipcp)
 {
 	rcu_read_lock();
 	ipc_lock_object(&ipcp->shm_perm);

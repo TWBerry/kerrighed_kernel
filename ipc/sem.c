@@ -1017,6 +1017,7 @@ static void set_semotime(struct sem_array *sma, struct sembuf *sops)
  */
 static void do_smart_update(struct sem_array *sma, struct sembuf *sops, int nsops)
 {
+	int i;
 	int otime = 1;
 
 #ifdef CONFIG_KRG_IPC
@@ -1165,9 +1166,9 @@ static int count_semzcnt(struct sem_array *sma, ushort semnum)
  * as a writer and the spinlock for this semaphore set hold. sem_ids.rwsem
  * remains locked on exit.
  */
+#ifdef CONFIG_KRG_IPC
 static void freeary(struct ipc_namespace *ns, struct kern_ipc_perm *ipcp)
 {
-#ifdef CONFIG_KRG_IPC
 	if (is_krg_ipc(&sem_ids(ns)))
 		krg_ipc_sem_freeary(ns, ipcp);
 	else

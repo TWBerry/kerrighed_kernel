@@ -972,7 +972,7 @@ static struct msg_msg *find_msg(struct msg_queue *msq, long *msgtyp, int mode)
 	}
 
 	return found ?: ERR_PTR(-EAGAIN);
-+}
+}
 
 #ifdef CONFIG_KRG_IPC
 long do_msgrcv(int msqid, void __user *buf, size_t bufsz, long msgtyp, int msgflg,
@@ -1025,7 +1025,6 @@ long do_msgrcv(int msqid, void __user *buf, size_t bufsz, long msgtyp, int msgfl
 #ifdef CONFIG_KRG_IPC
 	down_read(&msg_ids(ns).rwsem);
 #endif
-	msq = msg_lock_check(ns, msqid);
 	rcu_read_lock();
 	msq = msq_obtain_object_check(ns, msqid);
 	if (IS_ERR(msq)) {
@@ -1044,13 +1043,6 @@ long do_msgrcv(int msqid, void __user *buf, size_t bufsz, long msgtyp, int msgfl
 		if (ipcperms(ns, &msq->q_perm, S_IRUGO))
 			goto out_unlock1;
 
-		ipc_lock_object(&msq->q_perm);
-
-		/* raced with RMID? */
-		if (!ipc_valid_object(&msq->q_perm)) {
-			msg = ERR_PTR(-EIDRM);
-			goto out_unlock0;
-			tmp = tmp->next;
 		ipc_lock_object(&msq->q_perm);
 
 		/* raced with RMID? */
