@@ -190,7 +190,7 @@ static inline void __unmap_hugepage_range(struct mmu_gather *tlb,
 
 #endif /* !CONFIG_HUGETLB_PAGE */
 
-#ifndef pud_write
+/*#ifndef pud_write
 #ifdef CONFIG_X86_64
 static inline int pud_write(pud_t pud)
 {
@@ -203,7 +203,7 @@ static inline int pud_write(pud_t pud)
 	return 0;
 }
 #endif
-#endif
+#endif*/
 
 #define HUGETLB_ANON_FILE "anon_hugepage"
 
