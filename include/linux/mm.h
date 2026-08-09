@@ -1404,6 +1404,23 @@ extern int access_process_vm(struct task_struct *tsk, unsigned long addr,
 extern int access_remote_vm(struct mm_struct *mm, unsigned long addr,
 		void *buf, int len, unsigned int gup_flags);
 
+#define FOLL_WRITE      0x01
+#define FOLL_TOUCH      0x02
+#define FOLL_GET        0x04
+#define FOLL_DUMP       0x08
+#define FOLL_FORCE      0x10
+#define FOLL_NOWAIT     0x20
+#define FOLL_POPULATE   0x40
+#define FOLL_SPLIT      0x80
+#define FOLL_HWPOISON   0x100
+#define FOLL_NUMA       0x200
+#define FOLL_MIGRATION  0x400
+#define FOLL_TRIED      0x800
+#define FOLL_MLOCK      0x1000
+#define FOLL_REMOTE     0x2000
+#define FOLL_COW        0x4000
+#define FOLL_ANON       0x8000
+
 long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		      unsigned long start, unsigned long nr_pages,
 		      unsigned int foll_flags, struct page **pages,
@@ -1436,8 +1453,15 @@ static inline long get_user_pages_longterm(unsigned long start,
         unsigned long nr_pages, int write, int force,
         struct page **pages, struct vm_area_struct **vmas)
 {
+        unsigned int gup_flags = 0;
+
+        if (write)
+                gup_flags |= FOLL_WRITE;
+        if (force)
+                gup_flags |= FOLL_FORCE;
+
         return __get_user_pages(current, current->mm, start, nr_pages,
-                                write, force, pages, vmas, 0);
+                                gup_flags, pages, vmas, NULL);
 }
 #endif /* CONFIG_FS_DAX */
 
@@ -2327,23 +2351,23 @@ static inline struct page *follow_page(struct vm_area_struct *vma,
 	return follow_page_mask(vma, address, foll_flags, &unused_page_mask);
 }
 
-#define FOLL_WRITE	0x01	/* check pte is writable */
-#define FOLL_TOUCH	0x02	/* mark page accessed */
-#define FOLL_GET	0x04	/* do get_page on page */
-#define FOLL_DUMP	0x08	/* give error on hole if it would be zero */
-#define FOLL_FORCE	0x10	/* get_user_pages read/write w/o permission */
-#define FOLL_NOWAIT	0x20	/* if a disk transfer is needed, start the IO
+//#define FOLL_WRITE	0x01	/* check pte is writable */
+//#define FOLL_TOUCH	0x02	/* mark page accessed */
+//#define FOLL_GET	0x04	/* do get_page on page */
+//#define FOLL_DUMP	0x08	/* give error on hole if it would be zero */
+//#define FOLL_FORCE	0x10	/* get_user_pages read/write w/o permission */
+//#define FOLL_NOWAIT	0x20	/* if a disk transfer is needed, start the IO
 				 * and return without waiting upon it */
-#define FOLL_POPULATE	0x40	/* fault in page */
-#define FOLL_SPLIT	0x80	/* don't return transhuge pages, split them */
-#define FOLL_HWPOISON	0x100	/* check page is hwpoisoned */
-#define FOLL_NUMA	0x200	/* force NUMA hinting page fault */
-#define FOLL_MIGRATION	0x400	/* wait for page to replace migration entry */
-#define FOLL_TRIED	0x800	/* a retry, previous pass started an IO */
-#define FOLL_MLOCK	0x1000	/* lock present pages */
-#define FOLL_REMOTE	0x2000	/* we are working on non-current tsk/mm */
-#define FOLL_COW	0x4000	/* internal GUP flag */
-#define FOLL_ANON	0x8000	/* don't do file mappings */
+//#define FOLL_POPULATE	0x40	/* fault in page */
+//#define FOLL_SPLIT	0x80	/* don't return transhuge pages, split them */
+//#define FOLL_HWPOISON	0x100	/* check page is hwpoisoned */
+//#define FOLL_NUMA	0x200	/* force NUMA hinting page fault */
+//#define FOLL_MIGRATION	0x400	/* wait for page to replace migration entry */
+//#define FOLL_TRIED	0x800	/* a retry, previous pass started an IO */
+//#define FOLL_MLOCK	0x1000	/* lock present pages */
+//#define FOLL_REMOTE	0x2000	/* we are working on non-current tsk/mm */
+//#define FOLL_COW	0x4000	/* internal GUP flag */
+//#define FOLL_ANON	0x8000	/* don't do file mappings */
 
 typedef int (*pte_fn_t)(pte_t *pte, pgtable_t token, unsigned long addr,
 			void *data);
