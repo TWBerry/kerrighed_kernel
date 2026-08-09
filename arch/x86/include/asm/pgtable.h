@@ -240,12 +240,12 @@ static inline int pud_trans_splitting(pud_t pud)
 	return pud_val(pud) & _PAGE_SPLITTING;
 }
 
-static inline int pud_trans_huge(pud_t pud)
+/*static inline int pud_trans_huge(pud_t pud)
 {
 	return (pud_val(pud) & (_PAGE_PSE|_PAGE_DEVMAP)) == _PAGE_PSE;
 }
 #endif
-
+*/
 static inline int has_transparent_hugepage(void)
 {
 	return cpu_has_pse;

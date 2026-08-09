@@ -370,7 +370,7 @@ static inline int pud_trans_huge_lock(pud_t *pud, struct vm_area_struct *vma,
 	return 0;
 }
 
-static inline int do_huge_pmd_numa_page(struct vm_fault *vmf, pmd_t orig_pmd);
+static inline int do_huge_pmd_numa_page(struct vm_fault *vmf, pmd_t orig_pmd)
 {
 	return 0;
 }

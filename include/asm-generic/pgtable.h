@@ -663,7 +663,7 @@ static inline int pud_write(pud_t pud)
 #endif /* __HAVE_ARCH_PUD_WRITE */
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
-#if !defined(CONFIG_TRANSPARENT_HUGEPAGE) || \
+/*#if !defined(CONFIG_TRANSPARENT_HUGEPAGE) || \
 	(defined(CONFIG_TRANSPARENT_HUGEPAGE) && \
 	 !defined(CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD))
 static inline int pud_trans_huge(pud_t pud)
@@ -671,7 +671,7 @@ static inline int pud_trans_huge(pud_t pud)
 	return 0;
 }
 #endif
-
+*/
 #ifndef pmd_read_atomic
 static inline pmd_t pmd_read_atomic(pmd_t *pmdp)
 {

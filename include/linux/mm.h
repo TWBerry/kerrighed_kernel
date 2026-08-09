@@ -1433,11 +1433,11 @@ long get_user_pages_longterm(unsigned long start, unsigned long nr_pages,
 			     struct vm_area_struct **vmas);
 #else
 static inline long get_user_pages_longterm(unsigned long start,
-		unsigned long nr_pages, int write, int force,
-		struct page **pages, struct vm_area_struct **vmas)
+        unsigned long nr_pages, int write, int force,
+        struct page **pages, struct vm_area_struct **vmas)
 {
-	return __get_user_pages(current, current->mm, start, nr_pages,
-				gup_flags, pages, vmas, 0);
+        return __get_user_pages(current, current->mm, start, nr_pages,
+                                write, force, pages, vmas, 0);
 }
 #endif /* CONFIG_FS_DAX */
 
