@@ -105,6 +105,11 @@ static __always_inline bool static_key_true(struct static_key *key)
 	return !static_key_false(key);
 }
 
+static __always_inline bool static_key_enabled(struct static_key *key)
+{
+        return atomic_read(&key->enabled) > 0;
+}
+
 extern struct jump_entry __start___jump_table[];
 extern struct jump_entry __stop___jump_table[];
 
