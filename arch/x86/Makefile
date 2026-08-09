@@ -78,7 +78,7 @@ else
         KBUILD_CFLAGS += $(cflags-y)
 
         KBUILD_CFLAGS += -mno-red-zone
-        KBUILD_CFLAGS += -mcmodel=kernel
+        KBUILD_CFLAGS += -mcmodel=kernel -fno-pie -fno-pic
 
         # -funit-at-a-time shrinks the kernel .text considerably
         # unfortunately it makes reading oopses harder.
