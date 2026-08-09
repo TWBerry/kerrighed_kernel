@@ -1,0 +1,14 @@
+comment "Intel MIC bootstrap"
+
+config INTEL_MIC_BUS
+	tristate "Intel MIC Bus Driver (bootstrap)"
+	depends on 64BIT && PCI && X86 && X86_DEV_DMA_OPS
+	help
+	  Bootstrap import of the Intel MIC bus used by Xeon Phi X100.
+	  This is being backported to the Kerrighed 3.10 tree.
+
+config SCIF_BUS
+	tristate "SCIF Bus Driver (bootstrap)"
+	depends on 64BIT && PCI && X86 && X86_DEV_DMA_OPS
+	help
+	  Bootstrap import of the SCIF bus used by Intel MIC/X100.

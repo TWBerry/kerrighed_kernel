@@ -55,3 +55,5 @@ obj-$(CONFIG_LATTICE_ECP3_CONFIG)	+= lattice-ecp3-config.o
 obj-$(CONFIG_SRAM)		+= sram.o
 obj-$(CONFIG_GENWQE)		+= genwqe/
 obj-$(CONFIG_CXL_BASE)		+= cxl/
+
+obj-y += mic/
