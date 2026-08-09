@@ -1004,8 +1004,18 @@ out:
 	return rc;
 }
 EXPORT_SYMBOL(get_user_pages_longterm);
-#endif /* CONFIG_FS_DAX */
+#else /* CONFIG_FS_DAX */
 
+long get_user_pages_longterm(unsigned long start, unsigned long nr_pages,
+		int write, int force, struct page **pages,
+		struct vm_area_struct **vmas)
+{
+	return get_user_pages(current, current->mm, start, nr_pages,
+			      write, force, pages, vmas);
+}
+EXPORT_SYMBOL(get_user_pages_longterm);
+
+#endif /* CONFIG_FS_DAX */
 /**
  * populate_vma_page_range() -  populate a range of pages in the vma.
  * @vma:   target vma

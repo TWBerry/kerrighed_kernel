@@ -1444,11 +1444,11 @@ long __get_user_pages_unlocked(struct task_struct *tsk, struct mm_struct *mm,
 long get_user_pages_unlocked(struct task_struct *tsk, struct mm_struct *mm,
 		    unsigned long start, unsigned long nr_pages,
 		    int write, int force, struct page **pages);
-#ifdef CONFIG_FS_DAX
+//#ifdef CONFIG_FS_DAX
 long get_user_pages_longterm(unsigned long start, unsigned long nr_pages,
 			     int write, int force, struct page **pages,
 			     struct vm_area_struct **vmas);
-#else
+/*#else
 static inline long get_user_pages_longterm(unsigned long start,
         unsigned long nr_pages, int write, int force,
         struct page **pages, struct vm_area_struct **vmas)
@@ -2357,7 +2357,7 @@ static inline struct page *follow_page(struct vm_area_struct *vma,
 //#define FOLL_DUMP	0x08	/* give error on hole if it would be zero */
 //#define FOLL_FORCE	0x10	/* get_user_pages read/write w/o permission */
 //#define FOLL_NOWAIT	0x20	/* if a disk transfer is needed, start the IO
-				 * and return without waiting upon it */
+//				 * and return without waiting upon it */
 //#define FOLL_POPULATE	0x40	/* fault in page */
 //#define FOLL_SPLIT	0x80	/* don't return transhuge pages, split them */
 //#define FOLL_HWPOISON	0x100	/* check page is hwpoisoned */
