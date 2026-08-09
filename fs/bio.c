@@ -1940,12 +1940,14 @@ static void bio_pair_end_1(struct bio *bi, int err)
 	if (err)
 		bp->error = err;
 
+#ifdef CONFIG_BLK_DEV_INTEGRITY
 	/*
 	 * If the integrity payload was created for this bio (and not
 	 * split from the parent), then go ahead and free it.
 	 */
 	if (bio_integrity(bi) && bi->bi_integrity != &bp->bip2)
-	        bio_integrity_free(bi);
+		bio_integrity_free(bi);
+#endif
 
 	bio_pair_release(bp);
 }
@@ -1957,12 +1959,14 @@ static void bio_pair_end_2(struct bio *bi, int err)
 	if (err)
 		bp->error = err;
 
+#ifdef CONFIG_BLK_DEV_INTEGRITY
 	/*
 	 * If the integrity payload was created for this bio (and not
 	 * split from the parent), then go ahead and free it.
 	 */
 	if (bio_integrity(bi) && bi->bi_integrity != &bp->bip1)
-	        bio_integrity_free(bi);
+		bio_integrity_free(bi);
+#endif
 
 	bio_pair_release(bp);
 }
