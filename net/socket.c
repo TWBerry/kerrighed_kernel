@@ -1975,6 +1975,7 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	if (size > INT_MAX)
 		size = INT_MAX;
 
+#ifdef CONFIG_KRG_FAF
 	sock = sockfd_lookup_light(fd, &err, &fput_needed, &faf_file);
 	if (faf_file) {
 		err = krg_faf_recvfrom(faf_file, ubuf, size,
