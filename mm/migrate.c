@@ -49,7 +49,9 @@
 
 #include "internal.h"
 
+#ifdef CONFIG_MEMORY_FAILURE
 extern atomic_long_t num_poisoned_pages __read_mostly;
+#endif
 
 /*
  * migrate_prep() needs to be called before we start compiling a list of pages
@@ -1135,8 +1137,10 @@ out:
 	if (rc != -EAGAIN)
 		putback_active_hugepage(hpage);
 
+#ifdef CONFIG_MEMORY_FAILURE
 	if (reason == MR_MEMORY_FAILURE && !test_set_page_hwpoison(hpage))
 		atomic_long_inc(&num_poisoned_pages);
+#endif
 
 	putback_active_hugepage(new_hpage);
 	if (result) {
