@@ -107,11 +107,18 @@ static struct workqueue_struct *cgroup_destroy_wq;
  */
 #define SUBSYS(_x) [_x ## _subsys_id] = &_x ## _subsys,
 #define IS_SUBSYS_ENABLED(option) IS_BUILTIN(option)
+
+#if IS_BUILTIN(CONFIG_NETPRIO_CGROUP)
 #define ENABLE_NETPRIO_NOW
+#endif
+
 static struct cgroup_subsys *subsys[CGROUP_SUBSYS_COUNT] = {
 #include <linux/cgroup_subsys.h>
 };
+
+#ifdef ENABLE_NETPRIO_NOW
 #undef ENABLE_NETPRIO_NOW
+#endif
 
 /*
  * The "rootnode" hierarchy is the "dummy hierarchy", reserved for the
