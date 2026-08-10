@@ -314,5 +314,5 @@ static void __exit alsa_seq_device_exit(void)
 	bus_unregister(&snd_seq_bus_type);
 }
 
-subsys_initcall(alsa_seq_device_init)
+subsys_initcall(alsa_seq_device_init);
 module_exit(alsa_seq_device_exit)
