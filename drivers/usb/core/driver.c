@@ -1522,6 +1522,15 @@ int usb_resume(struct device *dev, pm_message_t msg)
 	return status;
 }
 
+static inline int usb_pm_usage_count(struct device *dev)
+{
+#ifdef CONFIG_PM_RUNTIME
+	return atomic_read(&dev->power.usage_count);
+#else
+	return 0;
+#endif
+}
+
 /**
  * usb_enable_autosuspend - allow a USB device to be autosuspended
  * @udev: the USB device which may be autosuspended
@@ -1576,7 +1585,7 @@ void usb_autosuspend_device(struct usb_device *udev)
 	usb_mark_last_busy(udev);
 	status = pm_runtime_put_sync_autosuspend(&udev->dev);
 	dev_vdbg(&udev->dev, "%s: cnt %d -> %d\n",
-			__func__, atomic_read(&udev->dev.power.usage_count),
+			__func__, usb_pm_usage_count(&udev->dev),
 			status);
 }
 
@@ -1608,7 +1617,7 @@ int usb_autoresume_device(struct usb_device *udev)
 	if (status < 0)
 		pm_runtime_put_sync(&udev->dev);
 	dev_vdbg(&udev->dev, "%s: cnt %d -> %d\n",
-			__func__, atomic_read(&udev->dev.power.usage_count),
+			__func__, usb_pm_usage_count(&udev->dev),
 			status);
 	if (status > 0)
 		status = 0;
@@ -1639,7 +1648,7 @@ void usb_autopm_put_interface(struct usb_interface *intf)
 	atomic_dec(&intf->pm_usage_cnt);
 	status = pm_runtime_put_sync(&intf->dev);
 	dev_vdbg(&intf->dev, "%s: cnt %d -> %d\n",
-			__func__, atomic_read(&intf->dev.power.usage_count),
+			__func__, usb_pm_usage_count(&intf->dev),
 			status);
 }
 EXPORT_SYMBOL_GPL(usb_autopm_put_interface);
@@ -1668,7 +1677,7 @@ void usb_autopm_put_interface_async(struct usb_interface *intf)
 	atomic_dec(&intf->pm_usage_cnt);
 	status = pm_runtime_put(&intf->dev);
 	dev_vdbg(&intf->dev, "%s: cnt %d -> %d\n",
-			__func__, atomic_read(&intf->dev.power.usage_count),
+			__func__, usb_pm_usage_count(&intf->dev),
 			status);
 }
 EXPORT_SYMBOL_GPL(usb_autopm_put_interface_async);
@@ -1721,7 +1730,7 @@ int usb_autopm_get_interface(struct usb_interface *intf)
 	else
 		atomic_inc(&intf->pm_usage_cnt);
 	dev_vdbg(&intf->dev, "%s: cnt %d -> %d\n",
-			__func__, atomic_read(&intf->dev.power.usage_count),
+			__func__, usb_pm_usage_count(&intf->dev),
 			status);
 	if (status > 0)
 		status = 0;
@@ -1756,7 +1765,7 @@ int usb_autopm_get_interface_async(struct usb_interface *intf)
 	else
 		atomic_inc(&intf->pm_usage_cnt);
 	dev_vdbg(&intf->dev, "%s: cnt %d -> %d\n",
-			__func__, atomic_read(&intf->dev.power.usage_count),
+			__func__, usb_pm_usage_count(&intf->dev),
 			status);
 	if (status > 0 || status == -EINPROGRESS)
 		status = 0;
@@ -1805,9 +1814,9 @@ static int autosuspend_check(struct usb_device *udev)
 			 * or else their drivers don't support autosuspend
 			 * and so they are permanently active.
 			 */
-			if (intf->dev.power.disable_depth)
+			if (!pm_runtime_enabled(&intf->dev))
 				continue;
-			if (atomic_read(&intf->dev.power.usage_count) > 0)
+			if (usb_pm_usage_count(&intf->dev) > 0)
 				return -EBUSY;
 			w |= intf->needs_remote_wakeup;
 

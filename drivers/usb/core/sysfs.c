@@ -417,6 +417,8 @@ static ssize_t active_duration_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(active_duration);
 
+#ifdef CONFIG_PM_RUNTIME
+
 static ssize_t autosuspend_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
@@ -497,6 +499,8 @@ static ssize_t level_store(struct device *dev, struct device_attribute *attr,
 	return rc;
 }
 static DEVICE_ATTR_RW(level);
+
+#endif /* CONFIG_PM_RUNTIME */
 
 static ssize_t usb2_hardware_lpm_show(struct device *dev,
 				      struct device_attribute *attr, char *buf)
@@ -653,8 +657,10 @@ static struct attribute_group usb3_hardware_lpm_attr_group = {
 };
 
 static struct attribute *power_attrs[] = {
+#ifdef CONFIG_PM_RUNTIME
 	&dev_attr_autosuspend.attr,
 	&dev_attr_level.attr,
+#endif
 	&dev_attr_connected_duration.attr,
 	&dev_attr_active_duration.attr,
 	NULL,

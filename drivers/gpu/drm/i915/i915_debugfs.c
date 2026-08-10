@@ -2862,11 +2862,11 @@ static int i915_runtime_pm_status(struct seq_file *m, void *unused)
 		   yesno(!dev_priv->gt.awake), dev_priv->gt.epoch);
 	seq_printf(m, "IRQs disabled: %s\n",
 		   yesno(!intel_irqs_enabled(dev_priv)));
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_RUNTIME
 	seq_printf(m, "Usage count: %d\n",
 		   atomic_read(&dev_priv->drm.dev->power.usage_count));
 #else
-	seq_printf(m, "Device Power Management (CONFIG_PM) disabled\n");
+	seq_printf(m, "Runtime Power Management (CONFIG_PM_RUNTIME) disabled\n");
 #endif
 	seq_printf(m, "PCI device power state: %s [%d]\n",
 		   pci_power_name(pdev->current_state),
