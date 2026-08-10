@@ -563,6 +563,7 @@ overflow:
 	       (int)ELF64_R_TYPE(rel[i].r_info), value);
 	return -ENOEXEC;
 }
+#endif /* CONFIG_KEXEC_FILE */
 
 /*
  * During a traditional boot under SME, SME will encrypt the kernel,
@@ -597,7 +598,6 @@ void arch_kexec_pre_free_pages(void *vaddr, unsigned int pages)
 	 */
 	set_memory_encrypted((unsigned long)vaddr, pages);
 }
-#endif /* CONFIG_KEXEC_FILE */
 
 static int
 kexec_mark_range(unsigned long start, unsigned long end, bool protect)
