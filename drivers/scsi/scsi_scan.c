@@ -1666,6 +1666,7 @@ void scsi_rescan_device(struct device *dev)
 
 	scsi_attach_vpd(sdev);
 
+#if IS_REACHABLE(CONFIG_SCSI_DH)
 	if (sdev->scsi_dh_data && sdev->scsi_dh_data->scsi_dh) {
 		struct scsi_device_handler_aux *scsi_dh_aux =
 			scsi_get_device_handler_aux(sdev->scsi_dh_data->scsi_dh);
@@ -1673,6 +1674,7 @@ void scsi_rescan_device(struct device *dev)
 		if (scsi_dh_aux && scsi_dh_aux->rescan)
 			scsi_dh_aux->rescan(sdev);
 	}
+#endif
 
 	if (dev->driver) {
 		drv = to_scsi_driver(dev->driver);
