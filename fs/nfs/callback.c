@@ -265,11 +265,12 @@ static int nfs_callback_up_net(int minorversion, struct svc_serv *serv,
 	ret = 0;
 	if (!IS_ENABLED(CONFIG_NFS_V4_1) || minorversion == 0)
 		ret = nfs4_callback_up_net(serv, net);
+        #ifdef CONFIG_NFS_V4_1
 	else if (xprt->ops->bc_setup)
 		serv->sv_bc_enabled = true;
 	else
 		ret = -EPROTONOSUPPORT;
-
+        #endif
 	if (ret < 0) {
 		printk(KERN_ERR "NFS: callback service start failed\n");
 		goto err_socks;
