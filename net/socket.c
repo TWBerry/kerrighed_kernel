@@ -2536,7 +2536,7 @@ SYSCALL_DEFINE3(recvmsg, int, fd, struct msghdr __user *, msg,
 int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		   unsigned int flags, struct timespec *timeout)
 {
-	int fput_needed, err, datagrams;
+	int fput_needed, err, datagrams = 0;
 	struct socket *sock;
 	struct mmsghdr __user *entry;
 	struct compat_mmsghdr __user *compat_entry;
@@ -2566,13 +2566,13 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 #endif
 
 	err = sock_error(sock->sk);
-	if (err)
+	if (err) {
+		datagrams = err;
 		goto out_put;
+	}
 
 	entry = mmsg;
 	compat_entry = (struct compat_mmsghdr __user *)mmsg;
-
-	datagrams = 0;
 
 	while (datagrams < vlen) {
 		/*

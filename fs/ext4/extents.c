@@ -3121,12 +3121,13 @@ static int ext4_zeroout_es(struct inode *inode, struct ext4_extent *ex)
 	ext4_fsblk_t ee_pblock;
 	unsigned int ee_len;
 
-	ee_block  = le32_to_cpu(ex->ee_block);
-	ee_len    = ext4_ext_get_actual_len(ex);
-	ee_pblock = ext4_ext_pblock(ex);
+	ee_len = ext4_ext_get_actual_len(ex);
 
 	if (ee_len == 0)
 		return 0;
+
+	ee_block  = le32_to_cpu(ex->ee_block);
+	ee_pblock = ext4_ext_pblock(ex);
 
 	return ext4_es_insert_extent(inode, ee_block, ee_len, ee_pblock,
 				     EXTENT_STATUS_WRITTEN);
@@ -3408,7 +3409,7 @@ static int ext4_ext_convert_to_initialized(handle_t *handle,
 	struct ext4_sb_info *sbi;
 	struct ext4_extent_header *eh;
 	struct ext4_map_blocks split_map;
-	struct ext4_extent zero_ex1, zero_ex2;
+	struct ext4_extent zero_ex1 = { 0 }, zero_ex2 = { 0 };
 	struct ext4_extent *ex, *abut_ex;
 	ext4_lblk_t ee_block, eof_block;
 	unsigned int ee_len, depth, map_len = map->m_len;

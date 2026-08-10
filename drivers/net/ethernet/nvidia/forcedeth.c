@@ -1735,7 +1735,7 @@ static void nv_update_stats(struct net_device *dev)
  * Called with read_lock(&dev_base_lock) held for read -
  * only synchronized against unregister_netdevice.
  */
-static struct rtnl_link_stats64*
+static void
 nv_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *storage)
 	__acquires(&netdev_priv(dev)->hwstats_lock)
 	__releases(&netdev_priv(dev)->hwstats_lock)
@@ -1795,8 +1795,6 @@ nv_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *storage)
 
 		spin_unlock_bh(&np->hwstats_lock);
 	}
-
-	return storage;
 }
 
 /*

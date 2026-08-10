@@ -323,7 +323,8 @@ static bool ch7xxx_get_hw_state(struct intel_dvo_device *dvo)
 {
 	u8 val;
 
-	ch7xxx_readb(dvo, CH7xxx_PM, &val);
+	if (!ch7xxx_readb(dvo, CH7xxx_PM, &val))
+		return false;
 
 	if (val & (CH7xxx_PM_DVIL | CH7xxx_PM_DVIP))
 		return true;
