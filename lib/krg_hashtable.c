@@ -5,6 +5,7 @@
 
 #include <linux/module.h>
 #include <linux/krg_hashtable.h>
+#include <linux/slab.h>
 
 
 /*****************************************************************************/
