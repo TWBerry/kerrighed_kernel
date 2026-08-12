@@ -54,10 +54,9 @@ void (*rpc_handlers[RPC_HANDLER_MAX])(struct rpc_desc* desc);
 {                                                       \
         .max_fds        = NR_OPEN_DEFAULT,              \
         .fd             = &krgrpc_files.fd_array[0],    \
-        .close_on_exec  = (fd_set *)&krgrpc_files.close_on_exec_init, \
-        .open_fds       = (fd_set *)&krgrpc_files.open_fds_init,  \
-        .rcu            = RCU_HEAD_INIT,                \
-        .next           = NULL,                         \
+        .close_on_exec  = krgrpc_files.close_on_exec_init, \
+        .open_fds       = krgrpc_files.open_fds_init,   \
+        .full_fds_bits  = krgrpc_files.full_fds_bits_init, \
 }
 
 #define KRGRPC_INIT_FILES \
@@ -65,11 +64,7 @@ void (*rpc_handlers[RPC_HANDLER_MAX])(struct rpc_desc* desc);
         .count          = ATOMIC_INIT(1),               \
         .fdt            = &krgrpc_files.fdtab,          \
         .fdtab          = KRGRPC_INIT_FDTABLE,          \
-	.file_lock	= __SPIN_LOCK_UNLOCKED(krgrpc_files.file_lock), \
-        .next_fd        = 0,                            \
-        .close_on_exec_init = { { 0, } },               \
-        .open_fds_init  = { { 0, } },                   \
-        .fd_array       = { NULL, }                     \
+        .file_lock      = __SPIN_LOCK_UNLOCKED(krgrpc_files.file_lock), \
 }
 
 static struct files_struct krgrpc_files = KRGRPC_INIT_FILES;

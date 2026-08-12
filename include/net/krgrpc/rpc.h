@@ -96,7 +96,7 @@ struct rpc_desc {
 	spinlock_t desc_lock;
 	enum rpcid rpcid;
 	kerrighed_node_t client;
-	enum rpc_rq_state state;
+	unsigned long state;
 	struct task_struct *thread;
 	kerrighed_node_t wait_from;
 	atomic_t usage;

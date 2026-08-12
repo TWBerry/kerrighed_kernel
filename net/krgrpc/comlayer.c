@@ -16,7 +16,7 @@
 #include <linux/netdevice.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-#include <net/tipc/tipc.h>
+#undef pr_fmt
 #include "../tipc/core.h"
 #include "../tipc/port.h"
 #include "../tipc/bearer.h"
@@ -73,7 +73,6 @@ struct workqueue_struct *krgcom_wq;
  * Local definition
  */
 
-u32 tipc_user_ref = 0;
 u32 tipc_port_ref;
 DEFINE_PER_CPU(u32, tipc_send_ref);
 struct tipc_name_seq tipc_seq;
@@ -98,16 +97,28 @@ inline int __send_iovec(kerrighed_node_t node, int nr_iov, struct iovec *iov)
 		.instance = node
 	};
 	struct __rpc_header *h = iov[0].iov_base;
+	unsigned int total_len = 0;
 	int err;
+	int i;
+
+	for (i = 0; i < nr_iov; i++)
+		total_len += iov[i].iov_len;
 
 	h->link_ack_id = rpc_link_recv_seq_id[node] - 1;
 	lockdep_off();
 	err = tipc_send2name(per_cpu(tipc_send_ref, smp_processor_id()),
 			     &name, 0,
-			     nr_iov, iov);
+			     nr_iov, iov, total_len);
 	lockdep_on();
-	if (!err)
+
+	/*
+	 * This TIPC API returns the transmitted byte count on success,
+	 * while KRGRPC expects zero for success.
+	 */
+	if (err >= 0) {
 		consecutive_recv[node] = 0;
+		err = 0;
+	}
 
 	return err;
 }
@@ -1173,11 +1184,7 @@ int comlayer_init(void)
 
 	tipc_core_start_net(tipc_addr(1, 1, kerrighed_node_id+1));
 
-	res = tipc_attach(&tipc_user_ref, NULL, NULL);
-	if (res)
-		goto exit_error;
-
-	res = tipc_createport(tipc_user_ref, NULL, TIPC_LOW_IMPORTANCE,
+	res = tipc_createport(NULL, TIPC_LOW_IMPORTANCE,
 			      NULL, NULL, NULL,
 			      NULL, tipc_handler, NULL,
 			      NULL, &tipc_port_ref);

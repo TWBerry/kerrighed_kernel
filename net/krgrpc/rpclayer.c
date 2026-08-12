@@ -37,12 +37,18 @@ int __rpc_send(struct rpc_desc* desc,
 		      int rpc_flags)
 {
 	kerrighed_node_t node;
-	unsigned long link_seq_id[KERRIGHED_MAX_NODES];
+	unsigned long *link_seq_id;
 	int err = 0;
 
 	switch (desc->type) {
 	case RPC_RQ_CLT:
 		if (desc->desc_id == 0) {
+			link_seq_id = kmalloc(sizeof(*link_seq_id) *
+						 KERRIGHED_MAX_NODES,
+						 GFP_ATOMIC);
+			if (!link_seq_id)
+				return -ENOMEM;
+
 			if (!irqs_disabled())
 				local_bh_disable();
 			spin_lock(&lock_id);
@@ -67,6 +73,8 @@ int __rpc_send(struct rpc_desc* desc,
 					    seq_id, link_seq_id,
 					    __flags, data, size,
 					    rpc_flags);
+
+			kfree(link_seq_id);
 
 		} else
 			err = __rpc_send_ll(desc, &desc->nodes,
@@ -778,7 +786,7 @@ int rpc_signal(struct rpc_desc* desc, int sigid)
 
 int __rpc_signalack(struct rpc_desc* desc)
 {
-	int v;
+	int v = 0;
 
 	if (desc->desc_send->flags & RPC_FLAGS_CLOSED)
 		return -EPIPE;
