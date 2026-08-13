@@ -68,17 +68,18 @@ static int handle_cmd(struct sk_buff *skb, struct genl_info *info)
 	return 0;
 }
 
-static struct genl_family tipc_genl_family = {
-	.id		= GENL_ID_GENERATE,
-	.name		= TIPC_GENL_NAME,
-	.version	= TIPC_GENL_VERSION,
-	.hdrsize	= TIPC_GENL_HDRLEN,
-	.maxattr	= 0,
+static const struct genl_ops tipc_genl_ops = {
+        .cmd            = TIPC_GENL_CMD,
+        .doit           = handle_cmd,
 };
 
-static struct genl_ops tipc_genl_ops = {
-	.cmd		= TIPC_GENL_CMD,
-	.doit		= handle_cmd,
+static struct genl_family tipc_genl_family = {
+        .name           = TIPC_GENL_NAME,
+        .version        = TIPC_GENL_VERSION,
+        .hdrsize        = TIPC_GENL_HDRLEN,
+        .maxattr        = 0,
+        .ops            = &tipc_genl_ops,
+        .n_ops          = 1,
 };
 
 static int tipc_genl_family_registered;
@@ -87,8 +88,7 @@ int tipc_netlink_start(void)
 {
 	int res;
 
-	res = genl_register_family_with_ops(&tipc_genl_family,
-		&tipc_genl_ops, 1);
+	res = genl_register_family(&tipc_genl_family);
 	if (res) {
 		pr_err("Failed to register netlink interface\n");
 		return res;
