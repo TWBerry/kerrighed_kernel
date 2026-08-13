@@ -60,7 +60,7 @@ static void init_prekerrighed_process(void)
 #endif
 
 	down_write(&kerrighed_init_sem);
-	read_lock(&tasklist_lock);
+	qread_lock(&tasklist_lock);
 
 #ifdef CONFIG_KRG_PROC
 	/* Initialize location structure for running processes */
@@ -86,7 +86,7 @@ static void init_prekerrighed_process(void)
 
 	hooks_start();
 
-	read_unlock(&tasklist_lock);
+	qread_unlock(&tasklist_lock);
 	up_write(&kerrighed_init_sem);
 };
 

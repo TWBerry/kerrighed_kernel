@@ -6,7 +6,6 @@
 #include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/workqueue.h>
-#include <linux/sysdev.h>
 
 #include <kerrighed/version.h>
 #include <kerrighed/types.h>
@@ -166,14 +165,16 @@ static char *read_from_file(char *_filename, int size)
 {
 	int error;
 	struct file *f;
-	char *b, *filename;
+	char *b;
+	struct filename *filename;
 
 	b = kmalloc(size, GFP_ATOMIC);
 	BUG_ON(b==NULL);
 
-	filename = getname(_filename);
+	filename = getname_kernel(_filename);
 	if (!IS_ERR(filename)) {
-		f = filp_open(filename, O_RDONLY, 0);
+		f = filp_open(filename->name, O_RDONLY, 0);
+		putname(filename);
 		if (IS_ERR(f)) {
 			printk("error: %ld\n", PTR_ERR(f));
 			goto err_file;
@@ -234,8 +235,8 @@ static void read_kerrighed_nodes(char *_h, char *k)
 		return;
 
 	lh = strlen(_h);
-	h = kmalloc(lh+1, GFP_ATOMIC);
-	strncpy(h, _h, lh);
+	h = kmalloc(lh+2, GFP_ATOMIC);
+	memcpy(h, _h, lh);
 	h[lh] = ':';
 	h[lh+1] = 0;
 	lh = strlen(h);

@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 #include <linux/krg_hashtable.h>
 
 #include <kerrighed/debug.h>
@@ -24,12 +25,22 @@ hashtable_t *proc_service_functions;
 
 static int proc_services_ioctl(struct inode *inode, struct file *filp,
 			       unsigned int cmd, unsigned long arg);
+static long proc_services_unlocked_ioctl(struct file *filp,
+                                         unsigned int cmd,
+                                         unsigned long arg);
 static ssize_t proc_services_read(struct file *, char *, size_t, loff_t *);
 
 static struct file_operations proc_services_files_ops = {
-	.ioctl = proc_services_ioctl,
+	.unlocked_ioctl = proc_services_unlocked_ioctl,
 	.read = proc_services_read,
 };
+
+static long proc_services_unlocked_ioctl(struct file *filp,
+                                         unsigned int cmd,
+                                         unsigned long arg)
+{
+        return proc_services_ioctl(file_inode(filp), filp, cmd, arg);
+}
 
 /** IO Control for the file /proc/kerrighed/services.
  *  @author Renaud Lottiaux
@@ -148,12 +159,13 @@ int krg_syscalls_init(void)
 
 	/* Create the /proc/kerrighed/services */
 
-	proc_services = create_proc_entry("services", 0644, proc_kerrighed);
+	proc_services = proc_create("services", 0644, proc_kerrighed,
+                                    &proc_services_files_ops);
 	if (proc_services == NULL)
 		err = -EMFILE;
 	else {
 		proc_service_functions = hashtable_new(PROC_HASH_TABLE_SIZE);
-		proc_services->proc_fops = &proc_services_files_ops;
+		
 	}
 
 	return err;

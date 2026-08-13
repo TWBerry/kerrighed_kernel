@@ -16,7 +16,7 @@ static struct {
 } hooks_table[HOTPLUG_MAX_HOOKS];
 
 static int hooks_index;
-static DECLARE_MUTEX (hooks_lock);
+static DEFINE_SEMAPHORE(hooks_lock);
 
 void hook_register(void (**hk) (void), void *f)
 {

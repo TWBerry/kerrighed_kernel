@@ -50,18 +50,8 @@ CREATE_PROCFS_READ_TYPE(unsigned_long_long, unsigned long long, "%llu");
  */
 void procfs_deltree(struct proc_dir_entry *entry)
 {
-	struct proc_dir_entry *subdir, *next;
-
-	subdir = entry->subdir;
-	if (subdir) {
-		for (next = subdir->next; next;
-		     subdir = next, next = subdir->next)
-			procfs_deltree(subdir);
-
-		procfs_deltree(subdir);
-	}
-
-	remove_proc_entry(entry->name, entry->parent);
+        if (entry)
+                proc_remove(entry);
 }
 EXPORT_SYMBOL(procfs_deltree);
 
@@ -131,7 +121,7 @@ int kerrighed_proc_init()
 
 	/* Create the /proc/kerrighed */
 
-	proc_kerrighed = create_proc_entry("kerrighed", S_IFDIR | 0755, NULL);
+	proc_kerrighed = proc_mkdir("kerrighed", NULL);
 
 	if (proc_kerrighed == NULL)
 		err = -EMFILE;
