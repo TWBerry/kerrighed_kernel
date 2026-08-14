@@ -6,6 +6,7 @@
 
 #include <net/krgrpc/rpc.h>
 #include <kddm/kddm.h>
+#include <linux/slab.h>
 
 #define NR_TEST_LOOPS 16
 #define NR_TESTS 12

@@ -100,7 +100,7 @@
 #define INC_STATE_COUNTER(state) \
         atomic_inc (&nr_OBJ_STATE[OBJ_STATE_INDEX(state)])
 #define DEC_STATE_COUNTER(state) \
-        atomic_inc (&nr_OBJ_STATE[OBJ_STATE_INDEX(state)])
+        atomic_dec (&nr_OBJ_STATE[OBJ_STATE_INDEX(state)])
 
 
 /** Object states used for the coherence protocol */

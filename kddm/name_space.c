@@ -8,6 +8,7 @@
 
 #include <linux/hashtable.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 
 #include <kddm/kddm.h>
 #include <kddm/name_space.h>

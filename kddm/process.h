@@ -1,5 +1,6 @@
 #ifndef __TOOLS_PROCESS__
 #define __TOOLS_PROCESS__
+#include <linux/sched.h>
 
 #define task_on_runqueue(t) (t->run_list.next != LIST_POISON1)
 

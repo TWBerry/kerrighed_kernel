@@ -5,6 +5,7 @@
  */
 
 #include <linux/mm.h>
+#include <linux/slab.h>
 
 #include <net/krgrpc/rpc.h>
 #include <kddm/kddm_tree.h>

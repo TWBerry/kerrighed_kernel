@@ -7,6 +7,8 @@
 
 #include <linux/mmzone.h>
 #include <linux/proc_fs.h>
+#include <linux/mm.h>
+#include <linux/uaccess.h>
 #include <asm/uaccess.h>
 #include <linux/swap.h>
 #include <linux/kernel.h>
@@ -18,6 +20,7 @@
 #include <kerrighed/procfs.h>
 #include <kddm/kddm.h>
 #include "kddm_bench.h"
+#include <linux/slab.h>
 
 /*  /proc/kerrighed/kddm          */
 static struct proc_dir_entry *procfs_kddm;
@@ -212,10 +215,12 @@ int read_meminfo (char *buffer,
       for (i = 0; i < NB_OBJ_STATE; i++)
         {
           len += sprintf (mybuffer + len,
-                          "%s: \t %d\n", STATE_NAME (i),
+                          "%s: \t %d\n", state_name[i],
 			  atomic_read(&nr_OBJ_STATE[i]));
         }
+      #ifdef CONFIG_KRG_KDDM_DEBUG
       check_pages();
+      #endif
     }
 
   if (offset + count >= len)
@@ -320,60 +325,148 @@ int read_bench (char *buffer,
 
 
 
+
+/*
+ * Compatibility adapter for the pre-3.10 read_proc API.
+ *
+ * Keep the original KDDM proc read callbacks intact and expose them through
+ * current struct file_operations.
+ */
+typedef int (*kddm_read_proc_t)(char *, char **, off_t, int, int *, void *);
+
+static ssize_t kddm_legacy_proc_read(struct file *file,
+                                     char __user *buf,
+                                     size_t count,
+                                     loff_t *ppos,
+                                     kddm_read_proc_t read_proc)
+{
+        char *page;
+        char *start;
+        void *data;
+        int eof = 0;
+        int len;
+
+        if (*ppos < 0)
+                return -EINVAL;
+
+        if (!count)
+                return 0;
+
+        count = min_t(size_t, count, PAGE_SIZE);
+
+        page = kmalloc(count, GFP_KERNEL);
+        if (!page)
+                return -ENOMEM;
+
+        start = page;
+        data = PDE_DATA(file_inode(file));
+
+        len = read_proc(page, &start, *ppos, (int)count, &eof, data);
+        if (len <= 0) {
+                kfree(page);
+                return len;
+        }
+
+        if (!start)
+                start = page;
+
+        if (len > count)
+                len = count;
+
+        if (copy_to_user(buf, start, len)) {
+                kfree(page);
+                return -EFAULT;
+        }
+
+        *ppos += len;
+        kfree(page);
+
+        return len;
+}
+
+static ssize_t kddm_meminfo_read(struct file *file,
+                                 char __user *buf,
+                                 size_t count,
+                                 loff_t *ppos)
+{
+        return kddm_legacy_proc_read(file, buf, count, ppos, read_meminfo);
+}
+
+static ssize_t kddm_setstat_read(struct file *file,
+                                 char __user *buf,
+                                 size_t count,
+                                 loff_t *ppos)
+{
+        return kddm_legacy_proc_read(file, buf, count, ppos, read_setstat);
+}
+
+static ssize_t kddm_bench_read(struct file *file,
+                               char __user *buf,
+                               size_t count,
+                               loff_t *ppos)
+{
+        return kddm_legacy_proc_read(file, buf, count, ppos, read_bench);
+}
+
+static const struct file_operations proc_kddm_meminfo_operations = {
+        .read   = kddm_meminfo_read,
+        .llseek = default_llseek,
+};
+
+static const struct file_operations proc_kddm_setstat_operations = {
+        .read   = kddm_setstat_read,
+        .llseek = default_llseek,
+};
+
+static const struct file_operations proc_kddm_bench_operations = {
+        .read   = kddm_bench_read,
+        .llseek = default_llseek,
+};
+
+
 /** Create the /proc/kerrighed/kddm directory and sub-directories.
  *  @author Renaud Lottiaux
  */
 void create_kddm_proc_dir (void)
 {
-  /* Create the /proc/kerrighed/kddm entry */
+        BUG_ON(proc_kerrighed == NULL);
 
-  BUG_ON (proc_kerrighed == NULL);
+        /* Create /proc/kerrighed/kddm. */
+        procfs_kddm = proc_mkdir_mode("kddm",
+                                      S_IRUGO | S_IWUGO | S_IXUGO,
+                                      proc_kerrighed);
+        if (procfs_kddm == NULL) {
+                printk("Cannot create /proc/kerrighed/kddm\n");
+                return;
+        }
 
-  procfs_kddm = create_proc_entry ("kddm", S_IFDIR | S_IRUGO | S_IWUGO |
-                                   S_IXUGO, proc_kerrighed);
+        /* Create /proc/kerrighed/kddm/meminfo. */
+        procfs_meminfo = proc_create("meminfo", S_IRUGO, procfs_kddm,
+                                     &proc_kddm_meminfo_operations);
+        if (procfs_meminfo == NULL) {
+                printk("Cannot create /proc/kerrighed/kddm/meminfo\n");
+                return;
+        }
 
-  if (procfs_kddm == NULL)
-    {
-      printk ("Cannot create /proc/kerrighed/kddm\n");
-      return;
-    }
+        /* Create /proc/kerrighed/kddm/setstat. */
+        procfs_setstat = proc_create("setstat", S_IRUGO, procfs_kddm,
+                                     &proc_kddm_setstat_operations);
+        if (procfs_setstat == NULL) {
+                printk("Cannot create /proc/kerrighed/kddm/setstat\n");
+                return;
+        }
 
-  /* Create the /proc/kerrighed/kddm/meminfo entry */
+        /* Create /proc/kerrighed/kddm/bench. */
+        procfs_bench = proc_create("bench", S_IRUGO, procfs_kddm,
+                                   &proc_kddm_bench_operations);
+        if (procfs_bench == NULL) {
+                printk("Cannot create /proc/kerrighed/kddm/bench\n");
+                return;
+        }
 
-  procfs_meminfo = create_proc_entry ("meminfo", S_IRUGO, procfs_kddm);
-
-  if (procfs_meminfo == NULL)
-    {
-      printk ("Cannot create /proc/kerrighed/kddm/memfinfo\n");
-      return;
-    }
-
-  procfs_meminfo->read_proc = read_meminfo;
-
-  /* Create the /proc/kerrighed/kddm/setstat entry */
-
-  procfs_setstat = create_proc_entry ("setstat", S_IRUGO, procfs_kddm);
-  if (procfs_setstat == NULL)
-    {
-      printk ("Cannot create /proc/kerrighed/kddm/setstat\n");
-      return;
-    }
-
-  procfs_setstat->read_proc = read_setstat;
-
-  /* Create the /proc/kerrighed/kddm/bench entry */
-
-  procfs_bench = create_proc_entry ("bench", S_IRUGO, procfs_kddm);
-  if (procfs_bench == NULL) {
-	  printk ("Cannot create /proc/kerrighed/kddm/bench\n");
-	  return;
-  }
-
-  procfs_bench->read_proc = read_bench;
-
-  /* Create the /proc/kddminfo entry */
-
-  proc_create("kddminfo", S_IRUGO, NULL, &proc_kddminfo_operations);
+        /* Create /proc/kddminfo. */
+        proc_create("kddminfo", S_IRUGO, NULL,
+                    &proc_kddminfo_operations);
 }
 
 
@@ -602,56 +695,95 @@ int read_set_id_objectstates (char *buffer,
 
 
 
+
+static ssize_t kddm_objectstates_read(struct file *file,
+                                      char __user *buf,
+                                      size_t count,
+                                      loff_t *ppos)
+{
+        return kddm_legacy_proc_read(file, buf, count, ppos,
+                                     read_set_id_objectstates);
+}
+
+static ssize_t kddm_set_id_setstat_read(struct file *file,
+                                        char __user *buf,
+                                        size_t count,
+                                        loff_t *ppos)
+{
+        return kddm_legacy_proc_read(file, buf, count, ppos,
+                                     read_set_id_setstat);
+}
+
+static ssize_t kddm_setinfo_read(struct file *file,
+                                 char __user *buf,
+                                 size_t count,
+                                 loff_t *ppos)
+{
+        return kddm_legacy_proc_read(file, buf, count, ppos,
+                                     read_set_id_setinfo);
+}
+
+static const struct file_operations proc_kddm_objectstates_operations = {
+        .read   = kddm_objectstates_read,
+        .llseek = default_llseek,
+};
+
+static const struct file_operations proc_kddm_set_id_setstat_operations = {
+        .read   = kddm_set_id_setstat_read,
+        .llseek = default_llseek,
+};
+
+static const struct file_operations proc_kddm_setinfo_operations = {
+        .read   = kddm_setinfo_read,
+        .llseek = default_llseek,
+};
+
+
 /* Create a /proc/kerrighed/kddm/<set_id> directory and sub-directories. */
 
 struct proc_dir_entry *create_kddm_proc (kddm_set_id_t set_id)
 {
-	struct proc_dir_entry *entry, *objectstates, *stat, *info;
-	char buffer[24];
+        struct proc_dir_entry *entry;
+        struct proc_dir_entry *objectstates;
+        struct proc_dir_entry *stat;
+        struct proc_dir_entry *info;
+        char buffer[24];
+        void *data = (void *)(unsigned long)set_id;
 
-	BUG_ON (procfs_kddm == NULL);
+        BUG_ON(procfs_kddm == NULL);
 
-	/* Create the /proc/kerrighed/kddm/<set_id> entry */
+        /* Create /proc/kerrighed/kddm/<set_id>. */
+        snprintf(buffer, sizeof(buffer), "%ld", set_id);
 
-	snprintf (buffer, 24, "%ld", set_id);
-	entry = create_proc_entry (buffer, S_IFDIR|S_IRUGO|S_IWUGO|S_IXUGO,
-				   procfs_kddm);
+        entry = proc_mkdir_mode(buffer,
+                                S_IRUGO | S_IWUGO | S_IXUGO,
+                                procfs_kddm);
+        if (entry == NULL)
+                return NULL;
 
-	if (entry == NULL)
-		return NULL;
+        /* Create <set_id>/objectstates. */
+        objectstates =
+                proc_create_data("objectstates", S_IRUGO, entry,
+                                 &proc_kddm_objectstates_operations, data);
+        if (objectstates == NULL)
+                return NULL;
 
-	/* Create the /proc/kerrighed/kddm/<set_id>/objectstates entry */
+        /* Create <set_id>/setstat. */
+        stat = proc_create_data("setstat", S_IRUGO, entry,
+                                &proc_kddm_set_id_setstat_operations, data);
+        if (stat == NULL) {
+                printk("Cannot create proc entry for %ld/setstat\n",
+                       set_id);
+                return NULL;
+        }
 
-	objectstates = create_proc_entry ("objectstates", S_IRUGO, entry);
+        /* Create <set_id>/setinfo. */
+        info = proc_create_data("setinfo", S_IRUGO, entry,
+                                &proc_kddm_setinfo_operations, data);
+        if (info == NULL)
+                return NULL;
 
-	if (objectstates == NULL)
-		return NULL;
-
-	objectstates->data = (void *) set_id;
-	objectstates->read_proc = read_set_id_objectstates;
-
-	/* Create the /proc/kerrighed/kddm/<set_id>/setstat entry */
-
-	stat = create_proc_entry ("setstat", S_IRUGO, entry);
-	if (stat == NULL) {
-		printk ("Cannot create proc entry for %ld/setstat\n",
-			set_id);
-		return NULL;
-	}
-
-	stat->data = (void *) set_id;
-	stat->read_proc = read_set_id_setstat;
-
-	/* Create the /proc/kerrighed/kddm/<set_id>/setinfo entry */
-
-	info = create_proc_entry ("setinfo", S_IRUGO, entry);
-	if (info == NULL)
-		return NULL;
-
-	info->data = (void *) set_id;
-	info->read_proc = read_set_id_setinfo;
-
-	return entry;
+        return entry;
 }
 
 

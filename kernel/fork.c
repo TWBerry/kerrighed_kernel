@@ -1600,7 +1600,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	if (!kh_copy_kddm_info)
 		p->kddm_info = NULL;
 	else {
-		retval = kh_copy_kddm_info(clone_flags, p)
+		retval = kh_copy_kddm_info(clone_flags, p);
 		if (retval)
 			goto bad_fork_cleanup_policy;
 	}

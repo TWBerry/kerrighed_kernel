@@ -8,6 +8,7 @@
 #ifndef __KDDM_NS__
 #define __KDDM_NS__
 
+#include <linux/krg_hashtable.h>
 #include <linux/unique_id.h>
 #include <linux/hashtable.h>
 #include <kddm/kddm_types.h>
