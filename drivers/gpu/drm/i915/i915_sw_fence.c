@@ -12,6 +12,10 @@
 #include "i915_sw_fence.h"
 #include "i915_selftest.h"
 
+#ifndef pr_fmt
+#define pr_fmt(fmt) fmt
+#endif
+
 #define I915_SW_FENCE_FLAG_ALLOC BIT(3) /* after WQ_FLAG_* for safety */
 
 static DEFINE_SPINLOCK(i915_sw_fence_lock);

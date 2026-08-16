@@ -4463,7 +4463,14 @@ intel_dp_check_mst_status(struct intel_dp *intel_dp)
 	bool bret;
 
 	if (intel_dp->is_mst) {
-		u8 esi[DP_DPRX_ESI_LEN] = { 0 };
+		/*
+                 * DP_DPRX_ESI_LEN is 14, but esi + 10 is passed to
+                 * drm_dp_channel_eq_ok(), whose interface takes a
+                 * DP_LINK_STATUS_SIZE (6-byte) array.  Allocate two
+                 * extra bytes so the object is large enough from
+                 * offset 10 onward.
+                 */
+                u8 esi[DP_DPRX_ESI_LEN + 2] = { 0 };
 		int ret = 0;
 		int retry;
 		bool handled;

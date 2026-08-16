@@ -21,6 +21,8 @@ struct timer_list {
 	void (*function)(unsigned long);
 	unsigned long data;
 
+	/* Compatibility callback for timer_setup(). */
+	void (*compat_function)(struct timer_list *);
 	int slack;
 
 #ifdef CONFIG_TIMER_STATS
@@ -161,12 +163,20 @@ static inline void init_timer_on_stack_key(struct timer_list *timer,
 #define TIMER_DATA_TYPE		unsigned long
 #define TIMER_FUNC_TYPE		void (*)(TIMER_DATA_TYPE)
 
-static inline void timer_setup(struct timer_list *timer,
-			       void (*callback)(struct timer_list *),
-			       unsigned int flags)
+static inline void timer_setup_compat(unsigned long data)
 {
-	__setup_timer(timer, (TIMER_FUNC_TYPE)callback,
-		      (TIMER_DATA_TYPE)timer, flags);
+        struct timer_list *timer = (struct timer_list *)data;
+
+        timer->compat_function(timer);
+}
+
+static inline void timer_setup(struct timer_list *timer,
+                               void (*callback)(struct timer_list *),
+                               unsigned int flags)
+{
+        __setup_timer(timer, timer_setup_compat,
+                      (TIMER_DATA_TYPE)timer, flags);
+        timer->compat_function = callback;
 }
 
 #define from_timer(var, callback_timer, timer_fieldname) \
