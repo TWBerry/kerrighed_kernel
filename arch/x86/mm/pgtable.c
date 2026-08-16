@@ -282,7 +282,7 @@ static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
 pgd_t *pgd_alloc(struct mm_struct *mm)
 {
 	pgd_t *pgd;
-	pmd_t *pmds[PREALLOCATED_PMDS];
+	pmd_t *pmds[PREALLOCATED_PMDS ? PREALLOCATED_PMDS : 1];
 
 	pgd = (pgd_t *)__get_free_pages(PGALLOC_GFP, PGD_ALLOCATION_ORDER);
 

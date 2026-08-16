@@ -14,6 +14,7 @@
 
 #include <linux/compiler.h>
 #include <asm/alternative.h>
+#include <asm/asm.h>
 #include <asm/barrier.h>
 
 #define BIT_64(n)			(U64_C(1) << (n))
@@ -68,7 +69,7 @@ set_bit(unsigned int nr, volatile unsigned long *addr)
 			: "iq" ((u8)CONST_MASK(nr))
 			: "memory");
 	} else {
-		asm volatile(LOCK_PREFIX "bts %1,%0"
+		asm volatile(LOCK_PREFIX __ASM_SIZE(bts) " %1,%0"
 			: BITOP_ADDR(addr) : "Ir" (nr) : "memory");
 	}
 }
@@ -84,7 +85,7 @@ set_bit(unsigned int nr, volatile unsigned long *addr)
  */
 static inline void __set_bit(int nr, volatile unsigned long *addr)
 {
-	asm volatile("bts %1,%0" : ADDR : "Ir" (nr) : "memory");
+	asm volatile(__ASM_SIZE(bts) " %1,%0" : ADDR : "Ir" (nr) : "memory");
 }
 
 /**
@@ -105,7 +106,7 @@ clear_bit(int nr, volatile unsigned long *addr)
 			: CONST_MASK_ADDR(nr, addr)
 			: "iq" ((u8)~CONST_MASK(nr)));
 	} else {
-		asm volatile(LOCK_PREFIX "btr %1,%0"
+		asm volatile(LOCK_PREFIX __ASM_SIZE(btr) " %1,%0"
 			: BITOP_ADDR(addr)
 			: "Ir" (nr));
 	}
@@ -127,7 +128,7 @@ static inline void clear_bit_unlock(unsigned nr, volatile unsigned long *addr)
 
 static inline void __clear_bit(int nr, volatile unsigned long *addr)
 {
-	asm volatile("btr %1,%0" : ADDR : "Ir" (nr));
+	asm volatile(__ASM_SIZE(btr) " %1,%0" : ADDR : "Ir" (nr));
 }
 
 /*
@@ -159,7 +160,7 @@ static inline void __clear_bit_unlock(unsigned nr, volatile unsigned long *addr)
  */
 static inline void __change_bit(int nr, volatile unsigned long *addr)
 {
-	asm volatile("btc %1,%0" : ADDR : "Ir" (nr));
+	asm volatile(__ASM_SIZE(btc) " %1,%0" : ADDR : "Ir" (nr));
 }
 
 /**
@@ -178,7 +179,7 @@ static inline void change_bit(int nr, volatile unsigned long *addr)
 			: CONST_MASK_ADDR(nr, addr)
 			: "iq" ((u8)CONST_MASK(nr)));
 	} else {
-		asm volatile(LOCK_PREFIX "btc %1,%0"
+		asm volatile(LOCK_PREFIX __ASM_SIZE(btc) " %1,%0"
 			: BITOP_ADDR(addr)
 			: "Ir" (nr));
 	}
@@ -196,7 +197,7 @@ static inline int test_and_set_bit(int nr, volatile unsigned long *addr)
 {
 	int oldbit;
 
-	asm volatile(LOCK_PREFIX "bts %2,%1\n\t"
+	asm volatile(LOCK_PREFIX __ASM_SIZE(bts) " %2,%1\n\t"
 		     "sbb %0,%0" : "=r" (oldbit), ADDR : "Ir" (nr) : "memory");
 
 	return oldbit;
@@ -228,7 +229,7 @@ static inline int __test_and_set_bit(int nr, volatile unsigned long *addr)
 {
 	int oldbit;
 
-	asm("bts %2,%1\n\t"
+	asm(__ASM_SIZE(bts) " %2,%1\n\t"
 	    "sbb %0,%0"
 	    : "=r" (oldbit), ADDR
 	    : "Ir" (nr));
@@ -247,7 +248,7 @@ static inline int test_and_clear_bit(int nr, volatile unsigned long *addr)
 {
 	int oldbit;
 
-	asm volatile(LOCK_PREFIX "btr %2,%1\n\t"
+	asm volatile(LOCK_PREFIX __ASM_SIZE(btr) " %2,%1\n\t"
 		     "sbb %0,%0"
 		     : "=r" (oldbit), ADDR : "Ir" (nr) : "memory");
 
@@ -274,7 +275,7 @@ static inline int __test_and_clear_bit(int nr, volatile unsigned long *addr)
 {
 	int oldbit;
 
-	asm volatile("btr %2,%1\n\t"
+	asm volatile(__ASM_SIZE(btr) " %2,%1\n\t"
 		     "sbb %0,%0"
 		     : "=r" (oldbit), ADDR
 		     : "Ir" (nr));
@@ -286,7 +287,7 @@ static inline int __test_and_change_bit(int nr, volatile unsigned long *addr)
 {
 	int oldbit;
 
-	asm volatile("btc %2,%1\n\t"
+	asm volatile(__ASM_SIZE(btc) " %2,%1\n\t"
 		     "sbb %0,%0"
 		     : "=r" (oldbit), ADDR
 		     : "Ir" (nr) : "memory");
@@ -306,7 +307,7 @@ static inline int test_and_change_bit(int nr, volatile unsigned long *addr)
 {
 	int oldbit;
 
-	asm volatile(LOCK_PREFIX "btc %2,%1\n\t"
+	asm volatile(LOCK_PREFIX __ASM_SIZE(btc) " %2,%1\n\t"
 		     "sbb %0,%0"
 		     : "=r" (oldbit), ADDR : "Ir" (nr) : "memory");
 
@@ -323,7 +324,7 @@ static __always_inline int variable_test_bit(int nr, volatile const unsigned lon
 {
 	int oldbit;
 
-	asm volatile("bt %2,%1\n\t"
+	asm volatile(__ASM_SIZE(bt) " %2,%1\n\t"
 		     "sbb %0,%0"
 		     : "=r" (oldbit)
 		     : "m" (*(unsigned long *)addr), "Ir" (nr));
