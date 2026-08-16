@@ -252,17 +252,17 @@ static inline void copy_highpage(struct page *to, struct page *from)
 static inline void copy_buff_to_highpage(struct page * page, char *buffer)
 {
 	char *to;
-	to = (char *)kmap_atomic(page, KM_USER0);
+	to = (char *)kmap_atomic(page);
 	copy_page(to, buffer);
-	kunmap_atomic(to, KM_USER0);
+	kunmap_atomic(to);
 }
 
 static inline void copy_highpage_to_buff(char *buffer, struct page * page)
 {
 	char *from;
-	from = (char *)kmap_atomic(page, KM_USER0);
+	from = (char *)kmap_atomic(page);
 	copy_page(buffer, from);
-	kunmap_atomic(from, KM_USER0);
+	kunmap_atomic(from);
 }
 #endif
 

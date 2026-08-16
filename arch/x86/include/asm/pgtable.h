@@ -758,8 +758,8 @@ static inline int pmd_present(pmd_t pmd)
 	 */
 	return pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE | _PAGE_PSE |
 				 _PAGE_NUMA);
-}
 #endif
+}
 
 static inline int pmd_none(pmd_t pmd)
 {

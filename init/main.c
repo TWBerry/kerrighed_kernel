@@ -474,7 +474,7 @@ void __init __weak mem_encrypt_init(void) { }
 /*
  * Set up kernel memory allocators
  */
-static void __init mm_init(void)
+static void __init mm_boot_init(void)
 {
 	/*
 	 * page_cgroup requires contiguous pages,
@@ -549,7 +549,7 @@ asmlinkage void __init start_kernel(void)
 	vfs_caches_init_early();
 	sort_main_extable();
 	trap_init();
-	mm_init();
+	mm_boot_init();
 
 	/*
 	 * Set up the scheduler prior starting any interrupts (such as the

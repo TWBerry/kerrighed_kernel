@@ -9,7 +9,6 @@
 #include <linux/memcontrol.h>
 #include <linux/mm_inline.h>
 #include <asm/pgtable.h>
-#include <asm/system.h>
 #include <asm/string.h>
 #include <linux/slab.h>
 #include <linux/pagemap.h>

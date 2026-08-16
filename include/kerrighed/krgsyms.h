@@ -44,10 +44,10 @@ typedef enum krgsyms_val {
 	KRGSYMS_TABLE_SIZE // Must be the last one
 } krgsyms_val_t;
 
-int krgsyms_register(enum krgsyms_val v, void* p);
+int krgsyms_register(enum krgsyms_val v, const void *p);
 int krgsyms_unregister(enum krgsyms_val v);
 
-enum krgsyms_val krgsyms_export(void* p);
+enum krgsyms_val krgsyms_export(const void *p);
 void* krgsyms_import(enum krgsyms_val v);
 
 #endif /* __ASSEMBLY__ */

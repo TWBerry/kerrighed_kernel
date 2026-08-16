@@ -759,7 +759,7 @@ static void print_bad_pte(struct vm_area_struct *vma, unsigned long addr,
 	if (page)
 		dump_page(page, "bad pte");
 	printk(KERN_ALERT
-		"addr:%p vm_flags:%08lx anon_vma:%p mapping:%p index:%lx\n",
+		"addr:%p vm_flags:%08llx anon_vma:%p mapping:%p index:%lx\n",
 		(void *)addr, vma->vm_flags, vma->anon_vma, mapping, index);
 	/*
 	 * Choose text because data symbols depend on CONFIG_KALLSYMS_ALL=y
@@ -903,7 +903,7 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 #ifdef CONFIG_KRG_MM
 		if (pte_obj_entry(src_pte)) {
 			pte_clear(dst_mm, addr, dst_pte);
-			return;
+			return 0;
 		}
 #endif
 		if (!pte_file(pte)) {
@@ -986,7 +986,7 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 #ifdef CONFIG_KRG_MM
 		if (anon_only && !PageAnon(page)) {
 			pte_clear(dst_mm, addr, dst_pte);
-			return;
+			return 0;
 		}
 #endif
 		get_page(page);
@@ -2433,7 +2433,7 @@ static int wp_page_copy(struct mm_struct *mm, struct vm_area_struct *vma,
 		entry = mk_pte(new_page, vma->vm_page_prot);
 		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
 		set_pte_at(mm, address, page_table, entry);
-		update_mmu_cache(vma, address, entry);
+		update_mmu_cache(vma, address, page_table);
 		if (old_page)
 			page_cache_release(old_page);
 		return 0;
@@ -3045,7 +3045,7 @@ static int do_swap_page(struct vm_fault *vmf, pte_t orig_pte)
 		try_to_free_swap(page);
 #ifdef CONFIG_KRG_MM
 	if (mm->anon_vma_kddm_set)
-		KRGFCT(kh_fill_pte)(mm, address, page_table);
+		KRGFCT(kh_fill_pte)(mm, address, vmf->pte);
 #endif
 	unlock_page(page);
 	if (page != swapcache) {
@@ -3300,6 +3300,8 @@ static int do_read_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 
 	ret = __do_fault(vma, address, pgoff, flags, NULL, &fault_page, NULL,
 			pmd, orig_pte);
+	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
+		return ret;
 #ifdef CONFIG_KRG_MM
 	if ((vma->vm_flags & VM_KDDM) &&
 	    (!fault_page->mapping || PageAnon(fault_page))) {
@@ -3307,8 +3309,6 @@ static int do_read_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 			return VM_FAULT_OOM;
 	}
 #endif
-	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
-		return ret;
 
 	pte = pte_offset_map_lock(mm, pmd, address, &ptl);
 	if (unlikely(!pte_same(*pte, orig_pte))) {
@@ -3319,7 +3319,7 @@ static int do_read_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 #ifdef CONFIG_KRG_MM
 	if (pte_same(*pte, orig_pte) || pte_obj_entry(pte) ||
-	   (pfn_to_page(pte_pfn(*pte)) == page)) {
+	   (pfn_to_page(pte_pfn(*pte)) == fault_page)) {
 #endif
 	do_set_pte(vma, address, fault_page, pte, false, false);
 #ifdef CONFIG_KRG_MM
@@ -3334,7 +3334,7 @@ static int do_cow_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pmd_t *pmd,
 		pgoff_t pgoff, unsigned int flags, pte_t orig_pte)
 {
-	struct page *fault_page, *new_page;
+	struct page *fault_page, *new_page = NULL;
 	void *fault_entry;
 	spinlock_t *ptl;
 	pte_t *pte;
@@ -3349,7 +3349,7 @@ static int do_cow_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 #endif
 
 #ifdef CONFIG_KRG_MM
-	if (!vma->vm_flags & VM_KDDM) {
+	if (!(vma->vm_flags & VM_KDDM)) {
 #endif
 	if (unlikely(anon_vma_prepare(vma)))
 		return VM_FAULT_OOM;
@@ -3367,6 +3367,27 @@ static int do_cow_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 #endif
 	ret = __do_fault(vma, address, pgoff, flags, new_page, &fault_page,
 			 &fault_entry, pmd, orig_pte);
+
+        /*
+         * __do_fault() does not initialize fault_page when returning
+         * ERROR/NOPAGE/RETRY/DONE_COW.  Handle these results before
+         * KerMM code dereferences fault_page.
+         */
+        if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE |
+                            VM_FAULT_RETRY))) {
+#ifdef CONFIG_KRG_MM
+                /*
+                 * VM_KDDM does not allocate or charge new_page locally.
+                 */
+                if (vma->vm_flags & VM_KDDM)
+                        return ret;
+#endif
+                goto uncharge_out;
+        }
+
+        if (ret & VM_FAULT_DONE_COW)
+                return ret;
+
 #ifdef CONFIG_KRG_MM
 	if ((vma->vm_flags & VM_KDDM) &&
 	    (!fault_page->mapping || PageAnon(fault_page))) {
@@ -3377,10 +3398,7 @@ static int do_cow_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (vma->vm_flags & VM_KDDM)
 		return ret;
 #endif
-	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
-		goto uncharge_out;
-	if (ret & VM_FAULT_DONE_COW)
-		return ret;
+
 
 	copy_user_highpage(new_page, fault_page, address, vma);
 	__SetPageUptodate(new_page);
@@ -3394,7 +3412,7 @@ static int do_cow_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 #ifdef CONFIG_KRG_MM
 	if (pte_same(*pte, orig_pte) || pte_obj_entry(pte) ||
-	   (pfn_to_page(pte_pfn(*pte)) == page)) {
+	   (pfn_to_page(pte_pfn(*pte)) == new_page)) {
 #endif
 	do_set_pte(vma, address, new_page, pte, true, true);
 #ifdef CONFIG_KRG_MM
@@ -3459,7 +3477,7 @@ static int do_shared_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 #ifdef CONFIG_KRG_MM
 	if (pte_same(*pte, orig_pte) || pte_obj_entry(pte) ||
-	   (pfn_to_page(pte_pfn(*pte)) == page)) {
+	   (pfn_to_page(pte_pfn(*pte)) == fault_page)) {
 #endif
 	do_set_pte(vma, address, fault_page, pte, true, false);
 #ifdef CONFIG_KRG_MM
@@ -3706,7 +3724,7 @@ static int handle_pte_fault(struct vm_fault *vmf)
 	entry = vmf->orig_pte;
 	if (!pte_present(entry)) {
 #ifdef CONFIG_KRG_MM
-		if (pte_none(entry) || pte_obj_entry(pte)) {
+		if (pte_none(entry) || pte_obj_entry(vmf->pte)) {
 #else
 		if (pte_none(entry)) {
 #endif

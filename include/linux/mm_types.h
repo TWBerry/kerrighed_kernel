@@ -324,7 +324,7 @@ struct vm_area_struct {
 	unsigned long vm_flags;		/* Flags, see mm.h. */
 #endif
 #ifdef CONFIG_KRG_MM
-	struct vm_operations_struct * initial_vm_ops;
+	const struct vm_operations_struct *initial_vm_ops;
 #endif
 
 
@@ -439,7 +439,7 @@ struct mm_struct {
 #ifdef CONFIG_KRG_MM
 	atomic_t mm_tasks;			/* How many tasks sharing this mm_struct cluster wide */
 #endif
-#ifdef CONFIG_KRG_EPM
+#if defined(CONFIG_KRG_MM) || defined(CONFIG_KRG_EPM)
 	atomic_t mm_ltasks;			/* How many tasks sharing this mm_struct locally */
 #endif
 	atomic_t mm_users;			/* How many users with user space? */

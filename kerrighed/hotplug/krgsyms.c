@@ -17,9 +17,9 @@
 #define KRGSYMS_HTABLE_SIZE 256
 
 static hashtable_t *krgsyms_htable;
-static void* krgsyms_table[KRGSYMS_TABLE_SIZE];
+static const void *krgsyms_table[KRGSYMS_TABLE_SIZE];
 
-int krgsyms_register(enum krgsyms_val v, void* p)
+int krgsyms_register(enum krgsyms_val v, const void *p)
 {
 	if( (v < 0) || (v >= KRGSYMS_TABLE_SIZE) ){
 		printk("krgsyms_register: Incorrect krgsym value (%d)\n", v);
@@ -47,7 +47,7 @@ EXPORT_SYMBOL(krgsyms_register);
 
 int krgsyms_unregister(enum krgsyms_val v)
 {
-	void *p;
+	const void *p;
 
 	if( (v < 0) || (v >= KRGSYMS_TABLE_SIZE) ){
 		printk("krgsyms_unregister: Incorrect krgsym value (%d)\n", v);
@@ -63,7 +63,7 @@ int krgsyms_unregister(enum krgsyms_val v)
 };
 EXPORT_SYMBOL(krgsyms_unregister);
 
-enum krgsyms_val krgsyms_export(void* p)
+enum krgsyms_val krgsyms_export(const void *p)
 {
 	return (enum krgsyms_val)hashtable_find(krgsyms_htable, (unsigned long)p);
 };
@@ -82,7 +82,7 @@ void* krgsyms_import(enum krgsyms_val v)
 		BUG();
 	}
 
-	return krgsyms_table[v];
+	return (void *)krgsyms_table[v];
 };
 
 static __init int init_krgsyms(void)

@@ -3372,7 +3372,7 @@ int special_mapping_vm_ops_krgsyms_unregister(void)
 int install_special_mapping(struct mm_struct *mm,
 			    unsigned long addr, unsigned long len,
 #ifdef CONFIG_KRG_MM
-			    unsigned long long vm_flags, struct page **pages)
+			    unsigned long vm_flags, struct page **pages)
 #else
 			    unsigned long vm_flags, struct page **pages)
 #endif

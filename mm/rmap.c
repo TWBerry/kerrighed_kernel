@@ -71,7 +71,7 @@
 
 #include "internal.h"
 
-static struct kmem_cache *anon_vma_cachep;
+struct kmem_cache *anon_vma_cachep;
 static struct kmem_cache *anon_vma_chain_cachep;
 
 static inline struct anon_vma *anon_vma_alloc(void)
@@ -1410,7 +1410,7 @@ int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 
 #ifdef CONFIG_KRG_MM
 	if (PageToInvalidate(page)) {
-		if ((vma->vm_flags & (VM_LOCKED|VM_RESERVED))) {
+		if ((vma->vm_flags & (VM_LOCKED | VM_SPECIAL))) {
 			ret = SWAP_FAIL;
 			goto out_unmap;
 		}
@@ -1421,9 +1421,9 @@ int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 		update_hiwater_rss(mm);
 
 		if (PageAnon(page))
-			dec_mm_counter(mm, anon_rss);
+			dec_mm_counter(mm, MM_ANONPAGES);
 		else
-			dec_mm_counter(mm, file_rss);
+			dec_mm_counter(mm, MM_FILEPAGES);
 
 		page_remove_rmap(page);
 		page_cache_release(page);

@@ -381,6 +381,11 @@ struct vm_area_struct;
 
 void import_vdso_context(struct vm_area_struct *vma);
 int import_mm_struct_end(struct mm_struct *mm, struct task_struct *task);
+
+#if defined(CONFIG_X86_64) && defined(CONFIG_COMPAT)
+void import_vdso32_context(struct vm_area_struct *vma);
+int import_mm_struct32_end(struct mm_struct *mm, struct task_struct *task);
+#endif
 #endif
 
 #endif /* _ASM_X86_ELF_H */

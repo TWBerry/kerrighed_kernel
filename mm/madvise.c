@@ -56,7 +56,11 @@ static long madvise_behavior(struct vm_area_struct * vma,
 	struct mm_struct * mm = vma->vm_mm;
 	int error = 0;
 	pgoff_t pgoff;
+#ifdef CONFIG_KRG_MM
+	unsigned long long new_flags = vma->vm_flags;
+#else
 	unsigned long new_flags = vma->vm_flags;
+#endif
 
 	switch (behavior) {
 	case MADV_NORMAL:

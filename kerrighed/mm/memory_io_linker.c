@@ -7,7 +7,6 @@
 
 #include <linux/mm.h>
 #include <asm/pgtable.h>
-#include <asm/system.h>
 #include <asm/string.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
@@ -77,9 +76,9 @@ int memory_export_object (struct rpc_desc *desc,
 	struct page *page = (struct page *)obj_entry->object;
 	char *data;
 
-	data = (char *)kmap_atomic(page, KM_USER0);
+	data = (char *)kmap_atomic(page);
 	rpc_pack(desc, 0, data, PAGE_SIZE);
-	kunmap_atomic(data, KM_USER0);
+	kunmap_atomic(data);
 
 //	copy_highpage_to_buff (buffer, (struct page *) obj_entry->object);
 	return 0;
@@ -175,7 +174,7 @@ void memory_change_state (struct kddm_obj * obj_entry,
 	switch (state) {
 	  case READ_COPY :
 	  case READ_OWNER :
-		  BUG_ON (TestSetPageLocked(page));
+		  BUG_ON(!trylock_page(page));
 
 		  if (page_mapped(page)) {
 			  BUG_ON ((page->mapping == NULL) &&

@@ -143,6 +143,9 @@ int mm_import_object (struct kddm_obj *obj_entry,
 		mm->env_start = src_mm.env_start;
 		mm->env_end = src_mm.env_end;
 		mm->context.vdso = src_mm.context.vdso;
+#ifdef CONFIG_X86_64
+                mm->context.ia32_compat = src_mm.context.ia32_compat;
+#endif
 	}
 
 	/* Update non static MM values */
@@ -157,7 +160,6 @@ int mm_import_object (struct kddm_obj *obj_entry,
 	mm->shared_vm = src_mm.shared_vm;
 	mm->exec_vm = src_mm.exec_vm;
 	mm->stack_vm = src_mm.stack_vm;
-	mm->reserved_vm = src_mm.reserved_vm;
 	mm->brk = src_mm.brk;
 	mm->flags = src_mm.flags;
 

@@ -54,11 +54,9 @@ int reinit_mm(struct mm_struct *mm)
 	mm->mmap = NULL;
 	mm->mmap_cache = NULL;
 	mm->map_count = 0;
-	cpus_clear (mm->cpu_vm_mask);
+	cpumask_clear(mm_cpumask(mm));
 	mm->mm_rb = RB_ROOT;
-	mm->nr_ptes = 0;
-	mm->token_priority = 0;
-	mm->last_interval = 0;
+	atomic_long_set(&mm->nr_ptes, 0);
 	/* Insert the new mm struct in the list of active mm */
 	spin_lock (&mmlist_lock);
 	list_add (&mm->mmlist, &init_mm.mmlist);
@@ -258,8 +256,12 @@ static struct mm_struct *kcb_copy_mm(struct task_struct * tsk,
 	if (clone_flags & CLONE_VFORK)
 		goto done_put;
 
-	if (cap_raised(tsk->krg_caps.effective, CAP_USE_REMOTE_MEMORY) ||
-	    oldmm->anon_vma_kddm_set) {
+	if (
+#ifdef CONFIG_KRG_CAP
+                cap_raised(tsk->krg_caps.effective,
+                           CAP_USE_REMOTE_MEMORY) ||
+#endif
+                oldmm->anon_vma_kddm_set) {
 		if (init_anon_vma_kddm_set(tsk, mm) != 0) {
 			BUG();
 			mmput(mm);

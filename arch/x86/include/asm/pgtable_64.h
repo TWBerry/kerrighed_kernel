@@ -369,6 +369,7 @@ static inline int pte_file_max_bits(void)
 #define SWP_TYPE_BITS		5
 
 #ifdef CONFIG_KRG_MM
+#define SWP_OFFSET_FIRST_BIT    9
 #define SWP_OFFSET_SHIFT	9
 #else /* CONFIG_KRG_MM */
 #define SWP_OFFSET_FIRST_BIT	(_PAGE_BIT_PROTNONE + 1)

@@ -5,6 +5,7 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 
+#include <linux/slab.h>
 #ifdef CONFIG_USERMODE
 #ifdef PTE_MASK
 // At this time (2.6.11) PTE_MASK is not defined in UM, so as soon as this
@@ -19,7 +20,7 @@
 
 /** Exported Functions **/
 
-struct ldt_struct *alloc_ldt_struct(unsigned int size)
+struct ldt_struct *alloc_ldt_struct(unsigned int size);
 void exit_mm(struct task_struct * tsk);
 struct vm_area_struct *remove_vma(struct vm_area_struct *vma);
 #define allocate_mm()	(kmem_cache_alloc(mm_cachep, GFP_KERNEL))
@@ -39,8 +40,8 @@ void remove_vma_list(struct mm_struct *mm, struct vm_area_struct *vma);
 /** Exported Variables **/
 
 extern struct kmem_cache *mm_cachep;
-extern struct vm_operations_struct shmem_vm_ops;
-extern struct vm_operations_struct generic_file_vm_ops ;
+extern const struct vm_operations_struct shmem_vm_ops;
+extern const struct vm_operations_struct generic_file_vm_ops;
 
 int special_mapping_vm_ops_krgsyms_register(void);
 int special_mapping_vm_ops_krgsyms_unregister(void);
@@ -52,8 +53,8 @@ static inline void dump_vma(struct task_struct *tsk)
 	vma = tsk->mm->mmap;
 
 	while(vma) {
-		printk ("[0x%08lx:0x%08lx] - flags 0x%08lx - offset 0x%08lx - "
-			"file %p\n", vma->vm_start, vma->vm_end, vma->vm_flags,
+		printk ("[0x%08lx:0x%08lx] - flags 0x%08llx - offset 0x%08lx - "
+			"file %p\n", vma->vm_start, vma->vm_end, (unsigned long long)vma->vm_flags,
 			vma->vm_pgoff, vma->vm_file);
 
 		vma = vma->vm_next;

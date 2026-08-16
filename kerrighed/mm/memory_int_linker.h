@@ -77,7 +77,7 @@ static inline pte_t *get_pte_no_lock (struct mm_struct *mm, unsigned long addr)
 		return NULL;
 
 	if (unlikely(!pmd_present(*(pmd))) &&
-	    __pte_alloc(mm, pmd, addr))
+	    __pte_alloc(mm, NULL, pmd, addr))
 		return NULL;
 
 	return pte_offset_map(pmd, addr);

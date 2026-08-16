@@ -7548,6 +7548,13 @@ static const struct trace_print_flags pageflag_names[] = {
 	{1UL << PG_swapcache,		"swapcache"	},
 	{1UL << PG_mappedtodisk,	"mappedtodisk"	},
 	{1UL << PG_reclaim,		"reclaim"	},
+#ifdef CONFIG_KRG_MM
+	{1UL << PG_to_invalidate,        "to_invalidate" },
+	{1UL << PG_to_set_read_only,     "to_set_read_only" },
+#ifdef CONFIG_DEBUG_PAGEALLOC
+	{1UL << PG_in_vec,               "in_vec"        },
+#endif
+#endif
 	{1UL << PG_swapbacked,		"swapbacked"	},
 	{1UL << PG_unevictable,		"unevictable"	},
 #ifdef CONFIG_MMU

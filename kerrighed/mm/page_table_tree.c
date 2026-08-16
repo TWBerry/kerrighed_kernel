@@ -57,9 +57,9 @@ static inline void unmap_page(struct mm_struct *mm,
 	update_hiwater_rss(mm);
 
 	if (PageAnon(page))
-		dec_mm_counter(mm, anon_rss);
+		dec_mm_counter(mm, MM_ANONPAGES);
 	else
-		dec_mm_counter(mm, file_rss);
+		dec_mm_counter(mm, MM_FILEPAGES);
 
 	page_remove_rmap(page);
 }
@@ -82,13 +82,13 @@ static inline struct page *replace_zero_page(struct mm_struct *mm,
 	if (!new_page)
 		return NULL;
 
-	BUG_ON (TestSetPageLocked(new_page));
+	BUG_ON(!trylock_page(new_page));
 
 	unmap_page (mm, addr, page, ptep);
 
 	set_pte (ptep, mk_pte (new_page, vma->vm_page_prot));
 	page_add_anon_rmap(new_page, vma, addr);
-	inc_mm_counter(mm, anon_rss);
+	inc_mm_counter(mm, MM_ANONPAGES);
 
 	return new_page;
 }
@@ -108,8 +108,8 @@ static inline void init_pte(struct mm_struct *mm,
 		return;
 	page = pfn_to_page(pte_pfn(*ptep));
 
-	while (TestSetPageLocked(page))
-		wait_on_page_locked(page);
+	while (!trylock_page(page))
+                wait_on_page_locked(page);
 
 	if (!PageAnon(page)) {
 		if (!(page == ZERO_PAGE(NULL)))
@@ -452,8 +452,8 @@ static inline void add_page_anon_rmap (struct mm_struct *mm,
 		BUG();
 
 	page_add_new_anon_rmap(page, vma, addr);
-	if (page_evictable(page, vma))
-		lru_cache_add_lru(page, LRU_ACTIVE_ANON);
+	if (page_evictable(page))
+		lru_cache_add(page);
 	else
 		add_page_to_unevictable_list(page);
 }
@@ -517,8 +517,8 @@ struct kddm_obj *kddm_pt_cow_object(struct kddm_set *set,
 	new_obj->object = new_page;
 	SET_OBJECT_LOCKED(new_obj);
 
-	while (TestSetPageLocked(old_page))
-		wait_on_page_locked(old_page);
+	while (!trylock_page(old_page))
+                wait_on_page_locked(old_page);
 
 	ptep = get_locked_pte(mm, objid * PAGE_SIZE, &ptl);
 	BUG_ON (!ptep);

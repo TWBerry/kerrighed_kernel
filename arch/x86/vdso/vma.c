@@ -164,18 +164,38 @@ static unsigned long vdso_addr(unsigned long start, unsigned len)
 #ifdef CONFIG_KRG_MM
 void import_vdso_context(struct vm_area_struct *vma)
 {
-	if (!vdso_enabled)
-		return;
+#ifdef CONFIG_COMPAT
+        /*
+         * Do not use is_compat_task() here: this VMA may belong to an
+         * imported/migrated mm rather than current.
+         *
+         * TIF_IA32 selects the 32-bit vDSO.  TIF_X32 deliberately stays
+         * on the native/x32 path.
+         */
+        if (vma->vm_mm->context.ia32_compat == TIF_IA32) {
+                import_vdso32_context(vma);
+                return;
+        }
+#endif
 
-	vma->vm_private_data = vdso_pages;
+        if (!vdso_enabled)
+                return;
 
-	BUG_ON(vma->vm_start != (unsigned long)vma->vm_mm->context.vdso);
-	BUG_ON(vma->vm_end != vma->vm_start + vdso_size);
+        vma->vm_private_data = vdso_pages;
+
+        BUG_ON(vma->vm_start !=
+               (unsigned long)vma->vm_mm->context.vdso);
+        BUG_ON(vma->vm_end != vma->vm_start + vdso_size);
 }
 
 int import_mm_struct_end(struct mm_struct *mm, struct task_struct *task)
 {
-	return 0;
+#ifdef CONFIG_COMPAT
+        if (mm->context.ia32_compat == TIF_IA32)
+                return import_mm_struct32_end(mm, task);
+#endif
+
+        return 0;
 }
 #endif
 
