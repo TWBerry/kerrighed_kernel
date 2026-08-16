@@ -1409,7 +1409,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 {
 	int retval;
 	struct task_struct *p;
-	void *cgrp_ss_priv[CGROUP_CANFORK_COUNT] = {};
+	void *cgrp_ss_priv[CGROUP_CANFORK_COUNT ?
+                           CGROUP_CANFORK_COUNT : 1] = {};
 
 	if ((clone_flags & (CLONE_NEWNS|CLONE_FS)) == (CLONE_NEWNS|CLONE_FS))
 		return ERR_PTR(-EINVAL);
@@ -1871,7 +1872,9 @@ bad_fork_cleanup_kddm_info:
 	if (p->kddm_info)
 		kmem_cache_free(kddm_info_cachep, p->kddm_info);
 #endif
+#ifndef CONFIG_KRG_KDDM
 bad_fork_cleanup_perf:
+#endif
 	perf_event_free_task(p);
 bad_fork_cleanup_policy:
 #ifdef CONFIG_NUMA
