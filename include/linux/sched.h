@@ -1470,6 +1470,9 @@ struct task_struct {
 	unsigned did_exec:1;
 	unsigned in_execve:1;	/* Tell the LSMs that the process is doing an
 				 * execve */
+#ifdef CONFIG_KRG_HOTPLUG
+	unsigned create_krg_ns:1;
+#endif
 	unsigned in_iowait:1;
 
 	/* task may not gain privileges */

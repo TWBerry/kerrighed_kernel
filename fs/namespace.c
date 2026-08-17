@@ -3011,6 +3011,18 @@ static struct mnt_namespace *alloc_mnt_ns(struct user_namespace *user_ns)
 	return new_ns;
 }
 
+#ifdef CONFIG_KRG_HOTPLUG
+/*
+ * Kerrighed keeps a reference to the cluster root mount namespace.
+ * get_mnt_ns() is private to fs/mount.h in this kernel, so expose the
+ * reference operation through a narrow Kerrighed-specific wrapper.
+ */
+void krg_get_mnt_ns(struct mnt_namespace *ns)
+{
+	get_mnt_ns(ns);
+}
+#endif
+
 struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 		struct user_namespace *user_ns, struct fs_struct *new_fs)
 {
