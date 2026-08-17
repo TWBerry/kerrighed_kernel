@@ -682,67 +682,99 @@ rpc_unpack_from(struct rpc_desc* desc, kerrighed_node_t node,
 	return 0;
 }
 
-kerrighed_node_t rpc_wait_return(struct rpc_desc* desc, int* value)
+static kerrighed_node_t __rpc_check_return(struct rpc_desc *desc, int *value)
 {
-	kerrighed_node_t node;
+    kerrighed_node_t node;
+    enum rpc_error err;
 
-	if (desc->type != RPC_RQ_CLT)
-		return -1;
+    for (node = 0; node < KERRIGHED_MAX_NODES; node++) {
+        if (desc->desc_recv[node] &&
+            (atomic_read(&desc->desc_recv[node]->nbunexpected) ||
+             (desc->desc_recv[node]->flags & RPC_FLAGS_CLOSED))) {
+            spin_unlock_bh(&desc->desc_lock);
 
+            if (value) {
+                err = rpc_unpack_type_from(desc, node, *value);
+                if (err != RPC_EOK)
+                    return -EPIPE;
+            }
 
- __restart:
-	
-	spin_lock_bh(&desc->desc_lock);
-	for(node=0;node<KERRIGHED_MAX_NODES;node++){
-		if(desc->desc_recv[node]
-		   && atomic_read(&desc->desc_recv[node]->nbunexpected)){
+            break;
+        }
+    }
 
-			spin_unlock_bh(&desc->desc_lock);
-
-			if(value)
-				rpc_unpack_from(desc, node,
-						0, value, sizeof(*value));
-
-			return node;
-		}
-	}
-
-	desc->state = RPC_STATE_WAIT;
-	desc->thread = current;
-	set_current_state(TASK_INTERRUPTIBLE);
-	spin_unlock_bh(&desc->desc_lock);
-
-	schedule();
-
-	goto __restart;
+    return node;
 }
 
-int rpc_wait_return_from(struct rpc_desc* desc, kerrighed_node_t node)
+kerrighed_node_t rpc_check_return(struct rpc_desc *desc, int *value)
 {
+    kerrighed_node_t ret;
 
-	if(desc->type != RPC_RQ_CLT)
-		return -1;
+    BUG_ON(desc->type != RPC_RQ_CLT);
 
- __restart:
-	
-	spin_lock_bh(&desc->desc_lock);
-	if(atomic_read(&desc->desc_recv[node]->nbunexpected)){
-		int value;
+    spin_lock_bh(&desc->desc_lock);
+    ret = __rpc_check_return(desc, value);
+    if (ret == KERRIGHED_MAX_NODES) {
+        spin_unlock_bh(&desc->desc_lock);
+        ret = -EAGAIN;
+    }
 
-		spin_unlock_bh(&desc->desc_lock);
-		rpc_unpack_type_from(desc, node, value);
-		return value;
-	}
-	
-	desc->state = RPC_STATE_WAIT1;
-	desc->wait_from = node;
-	desc->thread = current;
-	set_current_state(TASK_INTERRUPTIBLE);
-	spin_unlock_bh(&desc->desc_lock);
+    return ret;
+}
 
-	schedule();
-	
-	goto __restart;
+kerrighed_node_t rpc_wait_return(struct rpc_desc *desc, int *value)
+{
+    kerrighed_node_t ret;
+
+    BUG_ON(desc->type != RPC_RQ_CLT);
+
+    for (;;) {
+        spin_lock_bh(&desc->desc_lock);
+        ret = __rpc_check_return(desc, value);
+        if (ret != KERRIGHED_MAX_NODES)
+            break;
+
+        desc->state = RPC_STATE_WAIT;
+        desc->thread = current;
+        __set_current_state(TASK_UNINTERRUPTIBLE);
+        spin_unlock_bh(&desc->desc_lock);
+
+        schedule();
+    }
+
+    return ret;
+}
+
+int rpc_wait_return_from(struct rpc_desc *desc, kerrighed_node_t node)
+{
+    enum rpc_error err;
+    int value;
+
+    BUG_ON(desc->type != RPC_RQ_CLT);
+    BUG_ON(node >= KERRIGHED_MAX_NODES);
+
+    for (;;) {
+        spin_lock_bh(&desc->desc_lock);
+
+        if (atomic_read(&desc->desc_recv[node]->nbunexpected) ||
+            (desc->desc_recv[node]->flags & RPC_FLAGS_CLOSED)) {
+            spin_unlock_bh(&desc->desc_lock);
+
+            err = rpc_unpack_type_from(desc, node, value);
+            if (err != RPC_EOK)
+                return -EPIPE;
+
+            return value;
+        }
+
+        desc->state = RPC_STATE_WAIT1;
+        desc->wait_from = node;
+        desc->thread = current;
+        __set_current_state(TASK_UNINTERRUPTIBLE);
+        spin_unlock_bh(&desc->desc_lock);
+
+        schedule();
+    }
 }
 
 int rpc_wait_all(struct rpc_desc *desc)

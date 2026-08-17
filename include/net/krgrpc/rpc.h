@@ -151,6 +151,7 @@ enum rpc_error rpc_unpack_from(struct rpc_desc* desc, kerrighed_node_t node,
 			       int flags, void* data, size_t size);
 void rpc_cancel_unpack(struct rpc_desc* desc);
 
+kerrighed_node_t rpc_check_return(struct rpc_desc *desc, int *value);
 kerrighed_node_t rpc_wait_return(struct rpc_desc* desc, int* value);
 int rpc_wait_return_from(struct rpc_desc* desc, kerrighed_node_t node);
 int rpc_wait_all(struct rpc_desc *desc);
@@ -160,6 +161,8 @@ int rpc_signal(struct rpc_desc* desc, int sigid);
 int rpc_end(struct rpc_desc *rpc_desc, int flags);
 
 void rpc_free_buffer(struct rpc_data *buf);
+
+s64 rpc_consumed_bytes(void);
 
 /*
  * Convenient define

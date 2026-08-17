@@ -37,18 +37,13 @@
 
 #define REJECT_BACKOFF (HZ / 2)
 
-struct tipc_ordering_elem {
-	unsigned long seq_id;
-	struct sk_buff *buf;
-	unsigned char const *data;
-	unsigned int size;
-	struct list_head ordering_list;
-};
-
-static struct kmem_cache* tipc_ordering_elem_cachep;
-
-struct list_head tipc_ordering_queue[KERRIGHED_MAX_NODES];
-spinlock_t tipc_ordering_lock[KERRIGHED_MAX_NODES];
+/*
+ * Per-node RX ordering queue.  Using sk_buff_head preserves the original
+ * Kerrighed OOM/backpressure invariant without allocating an extra queue
+ * wrapper while memory is already under pressure.
+ */
+static struct sk_buff_head tipc_ordering_queue[KERRIGHED_MAX_NODES];
+static struct delayed_work tipc_rx_retry_work[KERRIGHED_MAX_NODES];
 
 struct tx_engine {
 	struct list_head delayed_tx_queue;
@@ -68,6 +63,70 @@ static void tipc_send_ack_worker(struct work_struct *work);
 static DECLARE_DELAYED_WORK(tipc_ack_work, tipc_send_ack_worker);
 
 struct workqueue_struct *krgcom_wq;
+
+
+/*
+ * KRG_RPC_CONSUMED_BYTES_RESTORED
+ *
+ * Restored from the original Kerrighed KRGRPC implementation.
+ * Tracks payload memory retained by rpc_tx_elem objects, including
+ * delayed and retransmission queues.
+ */
+#ifdef CONFIG_64BIT
+
+static atomic64_t consumed_bytes;
+
+static inline void consumed_bytes_add(long load)
+{
+	atomic64_add(load, &consumed_bytes);
+}
+
+static inline void consumed_bytes_sub(long load)
+{
+	atomic64_sub(load, &consumed_bytes);
+}
+
+s64 rpc_consumed_bytes(void)
+{
+	return atomic64_read(&consumed_bytes);
+}
+
+#else /* !CONFIG_64BIT */
+
+static s64 consumed_bytes;
+static DEFINE_SPINLOCK(consumed_bytes_lock);
+
+static inline void consumed_bytes_add(long load)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&consumed_bytes_lock, flags);
+	consumed_bytes += load;
+	spin_unlock_irqrestore(&consumed_bytes_lock, flags);
+}
+
+static inline void consumed_bytes_sub(long load)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&consumed_bytes_lock, flags);
+	consumed_bytes -= load;
+	spin_unlock_irqrestore(&consumed_bytes_lock, flags);
+}
+
+s64 rpc_consumed_bytes(void)
+{
+	unsigned long flags;
+	s64 ret;
+
+	spin_lock_irqsave(&consumed_bytes_lock, flags);
+	ret = consumed_bytes;
+	spin_unlock_irqrestore(&consumed_bytes_lock, flags);
+
+	return ret;
+}
+
+#endif /* !CONFIG_64BIT */
 
 /*
  * Local definition
@@ -142,6 +201,7 @@ static struct rpc_tx_elem *__rpc_tx_elem_alloc(size_t size, int nr_dest)
 	elem = kmem_cache_alloc(rpc_tx_elem_cachep, GFP_ATOMIC);
 	if (!elem)
 		goto oom;
+	consumed_bytes_add(size);
 	elem->data = kmalloc(size, GFP_ATOMIC);
 	if (!elem->data)
 		goto oom_free_elem;
@@ -155,6 +215,7 @@ static struct rpc_tx_elem *__rpc_tx_elem_alloc(size_t size, int nr_dest)
 oom_free_data:
 	kfree(elem->data);
 oom_free_elem:
+	consumed_bytes_sub(size);
 	kmem_cache_free(rpc_tx_elem_cachep, elem);
 oom:
 	return NULL;
@@ -164,6 +225,7 @@ static void __rpc_tx_elem_free(struct rpc_tx_elem *elem)
 {
 	kfree(elem->link_seq_id);
 	kfree(elem->data);
+	consumed_bytes_sub(elem->iov[1].iov_len);
 	kmem_cache_free(rpc_tx_elem_cachep, elem);
 }
 
@@ -767,297 +829,327 @@ void handle_valid_desc(struct rpc_desc *desc,
  * Packets are in the right order, so we have to find the corresponding
  * descriptor (if any).
  */
-static void tipc_handler_ordered(struct sk_buff *buf,
-				 unsigned const char* data,
-				 unsigned int size)
+static int tipc_handler_ordered(struct sk_buff *buf,
+                                unsigned const char *data,
+                                unsigned int size)
 {
-	unsigned char const* iter;
-	struct __rpc_header *h;
-	struct rpc_desc *desc;
-	struct rpc_desc_elem* descelem;
-	struct rpc_desc_recv* desc_recv;
-	struct hashtable_t* desc_ht;
+    unsigned char const *iter;
+    struct __rpc_header *h;
+    struct rpc_desc *desc;
+    struct rpc_desc_elem *descelem;
+    struct rpc_desc_recv *desc_recv;
+    struct hashtable_t *desc_ht;
+    int err = 0;
 
-	iter = data;
-	h = (struct __rpc_header*)iter;
-	iter += sizeof(struct __rpc_header);
+    iter = data;
+    h = (struct __rpc_header *)iter;
+    iter += sizeof(struct __rpc_header);
 
-	/* select the right array regarding the type of request:
-	   __RPC_HEADER_FLAGS_SRV_REPLY: we are the client side -> desc_clt
-	   else: we are the server side -> desc_srv[]
-	*/
-	desc_ht = (h->flags & __RPC_HEADER_FLAGS_SRV_REPLY) ? desc_clt : desc_srv[h->client];
+    /*
+     * Select the right descriptor table:
+     * __RPC_HEADER_FLAGS_SRV_REPLY means client side -> desc_clt,
+     * otherwise server side -> desc_srv[].
+     */
+    desc_ht = (h->flags & __RPC_HEADER_FLAGS_SRV_REPLY) ?
+              desc_clt : desc_srv[h->client];
 
-	hashtable_lock(desc_ht);
-	desc = __hashtable_find(desc_ht, h->desc_id);
+    hashtable_lock(desc_ht);
+    desc = __hashtable_find(desc_ht, h->desc_id);
 
-	if (desc) {
-		BUG_ON(desc->desc_id != h->desc_id);
-		rpc_desc_get(desc);
+    if (desc) {
+        BUG_ON(desc->desc_id != h->desc_id);
+        rpc_desc_get(desc);
+    } else {
+        spin_lock(&rpc_desc_done_lock[h->client]);
+        if (unlikely(h->desc_id <= rpc_desc_done_id[h->client])) {
+            spin_unlock(&rpc_desc_done_lock[h->client]);
+            hashtable_unlock(desc_ht);
+            return 0;
+        }
+        spin_unlock(&rpc_desc_done_lock[h->client]);
 
-	} else {
-		
-		spin_lock(&rpc_desc_done_lock[h->client]);
-		if (unlikely(h->desc_id <= rpc_desc_done_id[h->client])) {
-			
-			spin_unlock(&rpc_desc_done_lock[h->client]);
-			hashtable_unlock(desc_ht);
+        if (h->flags & __RPC_HEADER_FLAGS_SRV_REPLY) {
+            /*
+             * Requesting descriptor is already closed (most probably an
+             * asynchronous request).  Silently discard this packet.
+             */
+            hashtable_unlock(desc_ht);
+            return 0;
+        }
 
-			return;
-		}
+        desc = rpc_desc_alloc();
+        if (!desc) {
+            err = -ENOMEM;
+            goto out_unlock_ht;
+        }
 
-		rpc_desc_done_id[h->client] = h->desc_id;
-		spin_unlock(&rpc_desc_done_lock[h->client]);
+        desc->desc_send = rpc_desc_send_alloc();
+        if (!desc->desc_send) {
+            err = -ENOMEM;
+            goto out_free_desc;
+        }
 
-		if(h->flags & __RPC_HEADER_FLAGS_SRV_REPLY){
+        desc->desc_recv[0] = rpc_desc_recv_alloc();
+        if (!desc->desc_recv[0]) {
+            err = -ENOMEM;
+            goto out_free_desc_send;
+        }
 
-			// requesting desc is already closed (most probably an async request
-			// just discard this packet
-			hashtable_unlock(desc_ht);
-			return;
+        /* A server request can only be received from one node. */
+        krgnode_set(0, desc->nodes);
 
-		}else{
+        desc->desc_id = h->desc_id;
+        desc->type = RPC_RQ_SRV;
+        desc->client = h->client;
+        desc->rpcid = h->rpcid;
+        desc->service = rpc_services[desc->rpcid];
+        desc->thread = NULL;
 
-			desc = rpc_desc_alloc();
-			if (!desc) {
-				printk("tipc_handler_ordered: OOM (desc)\n");
-				BUG();
-			}
+        if (__rpc_emergency_send_buf_alloc(desc, 0)) {
+            err = -ENOMEM;
+            goto out_free_desc_recv;
+        }
 
-			desc->desc_send = rpc_desc_send_alloc();
-			if (!desc->desc_send) {
-				printk("tipc_handler_ordered: OOM (desc_send)\n");
-				BUG();
-			}
+        desc->state = RPC_STATE_NEW;
 
-			desc->desc_recv[0] = rpc_desc_recv_alloc();
-			if (!desc->desc_recv[0]) {
-				printk("tipc_handler_ordered: OOM (desc_recv)\n");
-				BUG();
-			}
+        rpc_desc_get(desc);
+        BUG_ON(h->desc_id != desc->desc_id);
+        __hashtable_add(desc_ht, h->desc_id, desc);
 
-			// Since a RPC_RQ_CLT can only be received from one node:
-			// by choice, we decide to use 0 as the corresponding id
-			krgnode_set(0, desc->nodes);
+        /*
+         * Do not advance desc_done_id until the descriptor is fully set up.
+         * Otherwise an OOM retry of this same packet would be discarded as
+         * already completed.
+         */
+        spin_lock(&rpc_desc_done_lock[h->client]);
+        rpc_desc_done_id[h->client] = h->desc_id;
+        spin_unlock(&rpc_desc_done_lock[h->client]);
+    }
 
-			desc->desc_id = h->desc_id;
-			desc->type = RPC_RQ_SRV;
-			desc->client = h->client;
-			desc->rpcid = h->rpcid;
-			desc->service = rpc_services[desc->rpcid];
-			desc->thread = NULL;
+    BUG_ON(desc->desc_id != h->desc_id);
 
-			if (__rpc_emergency_send_buf_alloc(desc, 0))
-				BUG();
+    switch (desc->type) {
+    case RPC_RQ_CLT:
+        desc_recv = desc->desc_recv[h->from];
+        break;
 
-			desc->state = RPC_STATE_NEW;
+    case RPC_RQ_SRV:
+        desc_recv = desc->desc_recv[0];
+        break;
 
-			rpc_desc_get(desc);
+    case RPC_RQ_FWD:
+        printk("tipc_handler_ordered: todo\n");
+        BUG();
+        break;
 
-			BUG_ON(h->desc_id != desc->desc_id);
-			__hashtable_add(desc_ht, h->desc_id, desc);
+    default:
+        printk("unexpected case %d\n", desc->type);
+        BUG();
+    }
 
-		}
+    if (!(desc->state & RPC_STATE_MASK_VALID) ||
+        (desc_recv->flags & RPC_FLAGS_CLOSED)) {
+        hashtable_unlock(desc_ht);
+        rpc_desc_put(desc);
+        return 0;
+    }
 
-	}
+    hashtable_unlock(desc_ht);
 
-	BUG_ON(desc->desc_id != h->desc_id);
+    descelem = kmem_cache_alloc(rpc_desc_elem_cachep, GFP_ATOMIC);
+    if (!descelem) {
+        err = -ENOMEM;
+        goto out_put;
+    }
 
-	/* Optimization: do not allocate memory if we already know that it is
-	 * useless to.
-	 * If desc is valid after double check, desc_recv retrieved below will
-	 * be valid too, since hashtable's lock acts as a memory barrier between
-	 * the processor having allocated desc (and inserted it in the table)
-	 * and us.
-	 * If desc has a valid state here, as long as we do not release
-	 * hashtable's lock desc_recv retrieved below is valid too (see
-	 * rpc_end()).
-	 */
-	switch (desc->type) {
-	case RPC_RQ_CLT:
-		// we are in the client side (just received a msg from server)
-		desc_recv = desc->desc_recv[h->from];
-		break;
+    skb_get(buf);
+    descelem->raw = buf;
+    descelem->data = (void *)iter;
+    descelem->seq_id = h->seq_id;
+    descelem->size = size - (iter - data);
+    descelem->flags = h->flags;
 
-	case RPC_RQ_SRV:
-		// we are in the server side (just received a msg from client)
-		desc_recv = desc->desc_recv[0];
-		break;
+    spin_lock(&desc->desc_lock);
 
-	case RPC_RQ_FWD:
-		printk("tipc_handler_ordered: todo\n");
-		BUG();
-		break;
+    if (!(desc->state & RPC_STATE_MASK_VALID) ||
+        (desc_recv->flags & RPC_FLAGS_CLOSED)) {
+        spin_unlock(&desc->desc_lock);
+        rpc_desc_elem_free(descelem);
+        goto out_put;
+    }
 
-	default:
-		printk("unexpected case %d\n", desc->type);
-		BUG();
-	}
-	/* Is the transaction still accepting packets? */
-	if (!(desc->state & RPC_STATE_MASK_VALID) ||
-	    (desc_recv->flags & RPC_FLAGS_CLOSED)) {
-		hashtable_unlock(desc_ht);
-		rpc_desc_put(desc);
-		return;
-	}
+    /* Releases desc->desc_lock. */
+    handle_valid_desc(desc, desc_recv, descelem, h, buf);
 
-	hashtable_unlock(desc_ht);
-
-	descelem = kmem_cache_alloc(rpc_desc_elem_cachep, GFP_ATOMIC);
-	if (!descelem) {
-		printk("OOM in tipc_handler_ordered\n");
-		BUG();
-	}
-
-	skb_get(buf);
-	descelem->raw = buf;
-	descelem->data = (void*) iter;
-	descelem->seq_id = h->seq_id;
-	descelem->size = size - (iter - data);
-	descelem->flags = h->flags;
-		
-	spin_lock(&desc->desc_lock);
-
-	/* Double-check withe desc->desc_lock held */
-	if (!(desc->state & RPC_STATE_MASK_VALID) ||
-	    (desc_recv->flags & RPC_FLAGS_CLOSED)) {
-		// This side is closed. Discard the packet
-		spin_unlock(&desc->desc_lock);
-		rpc_desc_elem_free(descelem);
-		goto out_put;
-	}
-
-	/* Releases desc->desc_lock */
-	handle_valid_desc(desc, desc_recv, descelem, h, buf);
-		
 out_put:
-	rpc_desc_put(desc);
+    rpc_desc_put(desc);
+    return err;
+
+out_free_desc_recv:
+    kmem_cache_free(rpc_desc_recv_cachep, desc->desc_recv[0]);
+out_free_desc_send:
+    kmem_cache_free(rpc_desc_send_cachep, desc->desc_send);
+out_free_desc:
+    rpc_desc_put(desc);
+out_unlock_ht:
+    hashtable_unlock(desc_ht);
+    return err;
+}
+
+static void schedule_tipc_rx_retry(kerrighed_node_t node)
+{
+    queue_delayed_work(krgcom_wq, &tipc_rx_retry_work[node], HZ / 2);
+}
+
+/* tipc_ordering_queue[node].lock must be held. */
+static int handle_one_packet(kerrighed_node_t node, struct sk_buff *buf)
+{
+    int err;
+
+    err = tipc_handler_ordered(buf, buf->data, buf->len);
+    if (!err) {
+        if (node == kerrighed_node_id)
+            rpc_link_send_ack_id[node] = rpc_link_recv_seq_id[node];
+        rpc_link_recv_seq_id[node]++;
+    }
+
+    return err;
+}
+
+/* tipc_ordering_queue[node].lock must be held. */
+static void run_rx_queue(kerrighed_node_t node)
+{
+    struct sk_buff_head *queue = &tipc_ordering_queue[node];
+    struct sk_buff *buf;
+    struct __rpc_header *h;
+
+    while ((buf = skb_peek(queue))) {
+        h = (struct __rpc_header *)buf->data;
+
+        BUG_ON(h->link_seq_id < rpc_link_recv_seq_id[node]);
+        if (h->link_seq_id > rpc_link_recv_seq_id[node])
+            break;
+
+        if (handle_one_packet(node, buf)) {
+            schedule_tipc_rx_retry(node);
+            break;
+        }
+
+        __skb_unlink(buf, queue);
+        kfree_skb(buf);
+    }
+}
+
+static void tipc_rx_retry_worker(struct work_struct *work)
+{
+    struct delayed_work *dwork;
+    kerrighed_node_t node;
+    struct sk_buff_head *queue;
+
+    dwork = container_of(work, struct delayed_work, work);
+    node = dwork - tipc_rx_retry_work;
+    BUG_ON(node < 0 || node >= KERRIGHED_MAX_NODES);
+
+    queue = &tipc_ordering_queue[node];
+    spin_lock_bh(&queue->lock);
+    run_rx_queue(node);
+    spin_unlock_bh(&queue->lock);
 }
 
 /*
  * tipc_handler
- * receives packets from TIPC and orders them
+ * Receives packets from TIPC and orders them.  The global per-node queue is
+ * retained from the 3.10 port, but the original Kerrighed backpressure
+ * invariant is restored: if processing the next packet fails with -ENOMEM,
+ * the skb stays at the queue head and is retried later instead of BUG()ing or
+ * advancing the receive sequence number.
  */
 static void tipc_handler(void *usr_handle,
-			 u32 port_ref,
-			 struct sk_buff **buf,
-			 unsigned char const *data,
-			 unsigned int size,
-			 unsigned int importance,
-			 struct tipc_portid const *orig,
-			 struct tipc_name_seq const *dest)
+                         u32 port_ref,
+                         struct sk_buff **buf,
+                         unsigned char const *data,
+                         unsigned int size,
+                         unsigned int importance,
+                         struct tipc_portid const *orig,
+                         struct tipc_name_seq const *dest)
 {
-	struct __rpc_header *h;
-	struct tipc_ordering_elem *ordering_elem;
+    struct __rpc_header *h;
+    struct sk_buff_head *queue;
+    struct sk_buff *__buf;
+    struct sk_buff *at;
 
-	h = (struct __rpc_header*)data;
+    __buf = *buf;
+    h = (struct __rpc_header *)data;
+    BUG_ON(size != __buf->len);
 
-	spin_lock(&tipc_ordering_lock[h->from]);
+    queue = &tipc_ordering_queue[h->from];
+    spin_lock(&queue->lock);
 
-	// Update the ack value sent by the other node
-	if (h->link_ack_id > rpc_link_send_ack_id[h->from]){
-		rpc_link_send_ack_id[h->from] = h->link_ack_id;
-		if(rpc_link_send_ack_id[h->from] - last_cleanup_ack[h->from]
-			> ACK_CLEANUP_WINDOW_SIZE){
-			int cpuid;
-			last_cleanup_ack[h->from] = h->link_ack_id;
-			for_each_online_cpu(cpuid){
-				struct tx_engine *engine = &per_cpu(tipc_tx_engine,
-									cpuid);
-				queue_delayed_work_on(cpuid, krgcom_wq,
-							&engine->cleanup_not_retx_work,0);
+    /* Update the ack value sent by the other node. */
+    if (h->link_ack_id > rpc_link_send_ack_id[h->from]) {
+        rpc_link_send_ack_id[h->from] = h->link_ack_id;
+        if (rpc_link_send_ack_id[h->from] - last_cleanup_ack[h->from] >
+            ACK_CLEANUP_WINDOW_SIZE) {
+            int cpuid;
 
-			}
-		}
+            last_cleanup_ack[h->from] = h->link_ack_id;
+            for_each_online_cpu(cpuid) {
+                struct tx_engine *engine =
+                    &per_cpu(tipc_tx_engine, cpuid);
+                queue_delayed_work_on(cpuid, krgcom_wq,
+                    &engine->cleanup_not_retx_work, 0);
+            }
+        }
+    }
 
-	}
+    if (h->rpcid == RPC_ACK)
+        goto exit;
 
-	if (h->rpcid == RPC_ACK)
-		goto exit;
+    if (h->link_seq_id < rpc_link_recv_seq_id[h->from]) {
+        krgnode_set(h->from, nodes_requiring_ack);
+        queue_delayed_work(krgcom_wq, &tipc_ack_work, 0);
+        goto exit;
+    }
 
-	// Check if we are not receiving an already received packet
-	if (h->link_seq_id < rpc_link_recv_seq_id[h->from]) {
-		krgnode_set(h->from, nodes_requiring_ack);
-		queue_delayed_work(krgcom_wq, &tipc_ack_work, 0);
-		goto exit;
-	}
+    if (consecutive_recv[h->from] >= MAX_CONSECUTIVE_RECV) {
+        krgnode_set(h->from, nodes_requiring_ack);
+        queue_delayed_work(krgcom_wq, &tipc_ack_work, 0);
+    }
+    consecutive_recv[h->from]++;
 
-	// Check if we are receiving lot of packets but sending none
-	if (consecutive_recv[h->from] >= MAX_CONSECUTIVE_RECV){
-		krgnode_set(h->from, nodes_requiring_ack);
-		queue_delayed_work(krgcom_wq, &tipc_ack_work, 0);
-	}
-	consecutive_recv[h->from]++;
+    if (h->link_seq_id > rpc_link_recv_seq_id[h->from]) {
+        unsigned long seq_id = h->link_seq_id;
 
-	// Is-it the next ordered message ?
-	if (h->link_seq_id > rpc_link_recv_seq_id[h->from]) {
-		struct tipc_ordering_elem *elem, *iter;
-		struct list_head *at;
+        /* Insert in order, optimized for in-order reception. */
+        skb_queue_reverse_walk(queue, at) {
+            struct __rpc_header *ath =
+                (struct __rpc_header *)at->data;
 
-		elem = kmem_cache_alloc(tipc_ordering_elem_cachep, GFP_ATOMIC);
-		if (!elem) {
-			printk("OOM in tipc_handler\n");
-			BUG();
-		}
+            if (ath->link_seq_id < seq_id)
+                break;
+            if (ath->link_seq_id == seq_id)
+                goto exit;
+        }
 
-		skb_get(*buf);
-		elem->seq_id = h->link_seq_id;
-		elem->buf = *buf;
-		elem->data = data;
-		elem->size = size;
+        skb_get(__buf);
+        __skb_queue_after(queue, at, __buf);
+        goto exit;
+    }
 
-		at = &tipc_ordering_queue[h->from];
-		list_for_each_entry_reverse(iter, &tipc_ordering_queue[h->from],
-					    ordering_list)
-			if (iter->seq_id < elem->seq_id) {
-				at = &iter->ordering_list;
-				break;
-			}else if(iter->seq_id == elem->seq_id){
+    if (handle_one_packet(h->from, __buf)) {
+        /*
+         * No wrapper allocation is needed here: sk_buff_head links are
+         * embedded in the skb, exactly as in the original implementation.
+         */
+        skb_get(__buf);
+        __skb_queue_head(queue, __buf);
+        schedule_tipc_rx_retry(h->from);
+    } else {
+        run_rx_queue(h->from);
+    }
 
-				kfree_skb(elem->buf);
-				kmem_cache_free(tipc_ordering_elem_cachep,
-						elem);
-
-				goto exit;
-			}
-		list_add(&elem->ordering_list, at);
-		goto exit;
-	}
-
-	tipc_handler_ordered(*buf, data, size);
-
-	if (h->from == kerrighed_node_id)
-		rpc_link_send_ack_id[kerrighed_node_id] = rpc_link_recv_seq_id[kerrighed_node_id];
-	rpc_link_recv_seq_id[h->from]++;
-
- unqueue:
-	if (list_empty(&tipc_ordering_queue[h->from]))
-		goto exit;
-
-	ordering_elem = list_entry(tipc_ordering_queue[h->from].next,
-				   struct tipc_ordering_elem,
-				   ordering_list);
-	
-	if (ordering_elem->seq_id <= rpc_link_recv_seq_id[h->from]){
-
-		list_del(&ordering_elem->ordering_list);
-		BUG_ON(tipc_ordering_queue[h->from].next == &ordering_elem->ordering_list);
-		
-		if (ordering_elem->seq_id == rpc_link_recv_seq_id[h->from]){
-			tipc_handler_ordered(ordering_elem->buf, ordering_elem->data,
-					     ordering_elem->size);
-		if (h->from == kerrighed_node_id)
-			rpc_link_send_ack_id[kerrighed_node_id] = rpc_link_recv_seq_id[kerrighed_node_id];
-		rpc_link_recv_seq_id[h->from]++;
-		}
-		
-		kfree_skb(ordering_elem->buf);
-		kmem_cache_free(tipc_ordering_elem_cachep, ordering_elem);
-		goto unqueue;
-	}
-
- exit:
-	spin_unlock(&tipc_ordering_lock[h->from]);
+exit:
+    spin_unlock(&queue->lock);
 }
 
 static
@@ -1168,15 +1260,11 @@ int comlayer_init(void)
 	krgcom_wq = create_workqueue("krgcom");
 
 	for (i = 0; i < KERRIGHED_MAX_NODES; i++) {
-		INIT_LIST_HEAD(&tipc_ordering_queue[i]);
-		spin_lock_init(&tipc_ordering_lock[i]);
+		skb_queue_head_init(&tipc_ordering_queue[i]);
+		INIT_DELAYED_WORK(&tipc_rx_retry_work[i], tipc_rx_retry_worker);
 		last_cleanup_ack[i] = 0;
 		consecutive_recv[i] = 0;
 	}
-
-	tipc_ordering_elem_cachep = kmem_cache_create("tipc_ordering_elem",
-						      sizeof(struct tipc_ordering_elem),
-						      0, 0, NULL);
 
 	tipc_net_id = kerrighed_session_id;
 
