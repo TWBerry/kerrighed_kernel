@@ -21,6 +21,8 @@
 /** Exported Functions **/
 
 struct ldt_struct *alloc_ldt_struct(unsigned int size);
+void finalize_ldt_struct(struct ldt_struct *ldt);
+void free_ldt_struct(struct ldt_struct *ldt);
 void exit_mm(struct task_struct * tsk);
 struct vm_area_struct *remove_vma(struct vm_area_struct *vma);
 #define allocate_mm()	(kmem_cache_alloc(mm_cachep, GFP_KERNEL))

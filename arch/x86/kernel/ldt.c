@@ -113,7 +113,10 @@ struct ldt_struct *alloc_ldt_struct(unsigned int size)
 }
 
 /* After calling this, the LDT is immutable. */
-static void finalize_ldt_struct(struct ldt_struct *ldt)
+#ifndef CONFIG_KRG_MM
+static
+#endif
+void finalize_ldt_struct(struct ldt_struct *ldt)
 {
 	paravirt_alloc_ldt(ldt->entries, ldt->size);
 }
@@ -129,7 +132,10 @@ static void install_ldt(struct mm_struct *current_mm,
 	on_each_cpu_mask(mm_cpumask(current_mm), flush_ldt, current_mm, true);
 }
 
-static void free_ldt_struct(struct ldt_struct *ldt)
+#ifndef CONFIG_KRG_MM
+static
+#endif
+void free_ldt_struct(struct ldt_struct *ldt)
 {
 	if (likely(!ldt))
 		return;

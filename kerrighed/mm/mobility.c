@@ -26,6 +26,9 @@
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
+#ifndef CONFIG_USERMODE
+#include <asm/mmu_context.h>
+#endif
 #include <kerrighed/krgsyms.h>
 #include <kerrighed/krginit.h>
 #include <net/krgrpc/rpcid.h>
@@ -376,9 +379,10 @@ int export_context_struct (ghost_t * ghost,
 
 #ifndef CONFIG_USERMODE
 	if (mm->context.ldt) {
-		r = ghost_write(ghost,
-				mm->context.ldt,
-				mm->context.ldt->size * LDT_ENTRY_SIZE);
+		struct ldt_struct *ldt = mm->context.ldt;
+
+		r = ghost_write(ghost, ldt->entries,
+				ldt->size * LDT_ENTRY_SIZE);
 		if (r)
 			goto err;
 	}
@@ -608,7 +612,7 @@ int import_vma_pages (ghost_t * ghost,
 		pmd = pmd_alloc (mm, pud, address);
 		BUG_ON(!pmd);
 
-		pte = pte_alloc_map (mm, pmd, address);
+		pte = pte_alloc_map(mm, vma, pmd, address);
 		BUG_ON(!pte);
 		set_pte (pte, mk_pte (new_page, prot));
 
@@ -686,7 +690,7 @@ static inline void unmap_hole (struct mm_struct *mm,
 
 	total_vm = mm->total_vm;
 	locked_vm = mm->locked_vm;
-	do_munmap (mm, start, end - start);
+	do_munmap(mm, start, end - start, NULL);
 	mm->total_vm = total_vm;
 	mm->locked_vm = locked_vm;
 }
@@ -757,10 +761,10 @@ int reconcile_vmas(struct mm_struct *mm, struct vm_area_struct *vma,
 				old->vm_ops->open(old);
 			mapping = old->vm_file->f_mapping;
 			if (mapping)
-				spin_lock(&mapping->i_mmap_lock);
+				mutex_lock(&mapping->i_mmap_mutex);
 			__vma_link_file(old);
 			if (mapping)
-				spin_unlock(&mapping->i_mmap_lock);
+				mutex_unlock(&mapping->i_mmap_mutex);
 		}
 	}
 	remove_vma(vma);
@@ -920,18 +924,31 @@ static int import_context_struct(ghost_t * ghost, struct mm_struct *mm)
 #ifndef CONFIG_USERMODE
 
 	if (mm->context.ldt) {
-		int orig_size = mm->context.ldt->size;
+		struct ldt_struct *new_ldt;
+		unsigned int orig_size = mm->context.ldt->size;
 
+		/*
+		 * The serialized mm_struct only carries the fact and size of
+		 * the LDT.  Linux 3.10 stores descriptors in ldt->entries,
+		 * unlike the flat LDT pointer used by the original Kerrighed
+		 * kernel.  Recreate the target representation explicitly.
+		 */
 		mm->context.ldt = NULL;
+		new_ldt = alloc_ldt_struct(orig_size);
+		if (!new_ldt)
+			return -ENOMEM;
 
-		r = alloc_ldt_struct (orig_size);
-		if (!r)
-			return -E_CR_BADDATA;
-
-		r = ghost_read(ghost, mm->context.ldt,
-			       mm->context.ldt->size * LDT_ENTRY_SIZE);
-		if (r)
+		r = ghost_read(ghost, new_ldt->entries,
+			       new_ldt->size * LDT_ENTRY_SIZE);
+		if (r) {
+			/* Balance the architecture LDT hooks before freeing it. */
+			finalize_ldt_struct(new_ldt);
+			free_ldt_struct(new_ldt);
 			goto exit;
+		}
+
+		finalize_ldt_struct(new_ldt);
+		mm->context.ldt = new_ldt;
 	}
 
 	mutex_init(&mm->context.lock);
