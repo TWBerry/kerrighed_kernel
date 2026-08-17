@@ -328,7 +328,7 @@ err:
     return ret;
 }
 
-static __maybe_unused struct krg_namespace *create_krg_container(struct krg_namespace *ns)
+static struct krg_namespace *create_krg_container(struct krg_namespace *ns)
 {
     struct task_struct *t;
 
@@ -419,6 +419,7 @@ static void init_prekerrighed_process(void)
 static void handle_cluster_start(struct rpc_desc *desc, void *data, size_t size)
 {
 	struct hotplug_node_set start_msg;
+	struct krg_namespace *container_ns = NULL;
 	int ret = 0;
 	int err;
 
@@ -430,12 +431,30 @@ static void handle_cluster_start(struct rpc_desc *desc, void *data, size_t size)
 		       start_msg.subclusterid, kerrighed_subsession_id);
 		goto cancel;
 	}
+
+	/*
+	 * The Linux 3.10 bootstrap path can still start without a userspace
+	 * cluster-init helper. Once a helper is configured, restore the
+	 * original Kerrighed container handshake and create a krg_namespace
+	 * before distributed services are brought online. The bootstrap
+	 * fallback is intentionally retained until runtime validation of the
+	 * restored container path is complete.
+	 */
+	if (cluster_init_helper_path[0]) {
+		init_completion(&krg_container_continue);
+		init_completion(&krg_container_done);
+
+		container_ns = create_krg_container(find_get_krg_ns());
+		if (!container_ns)
+			ret = -EIO;
+	}
+
 	err = rpc_pack_type(desc, ret);
 	if (err)
-		goto cancel;
+		goto cancel_container;
 	err = rpc_unpack_type(desc, ret);
-	if (err)
-		goto cancel;
+	if (err || ret)
+		goto cancel_container;
 
 	init_prekerrighed_process();
 
@@ -450,10 +469,22 @@ static void handle_cluster_start(struct rpc_desc *desc, void *data, size_t size)
 	printk("Kerrighed is running on %d nodes\n", num_online_krgnodes());
 	complete_all(&cluster_started);
 
+	if (container_ns) {
+		complete(&krg_container_continue);
+		wait_for_completion(&krg_container_done);
+		put_krg_ns(container_ns);
+	}
+
 out:
 	mutex_unlock(&cluster_start_mutex);
 	return;
 
+cancel_container:
+	if (container_ns) {
+		complete(&krg_container_continue);
+		wait_for_completion(&krg_container_done);
+		put_krg_ns(container_ns);
+	}
 cancel:
 	rpc_cancel(desc);
 	goto out;
