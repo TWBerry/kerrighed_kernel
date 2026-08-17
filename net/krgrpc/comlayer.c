@@ -34,6 +34,8 @@
 
 #define ACK_CLEANUP_WINDOW_SIZE 100
 #define MAX_CONSECUTIVE_RECV 1000
+#define ACK_CLEANUP_WINDOW_SIZE__LOWMEM_MODE 20
+#define MAX_CONSECUTIVE_RECV__LOWMEM_MODE 20
 
 #define REJECT_BACKOFF (HZ / 2)
 
@@ -139,6 +141,8 @@ struct tipc_name_seq tipc_seq;
 krgnodemask_t nodes_requiring_ack;
 unsigned long last_cleanup_ack[KERRIGHED_MAX_NODES];
 static int consecutive_recv[KERRIGHED_MAX_NODES];
+static int max_consecutive_recv[KERRIGHED_MAX_NODES];
+static int ack_cleanup_window_size;
 
 void __rpc_put_raw_data(void *data){
 	kfree_skb((struct sk_buff*)data);
@@ -1111,7 +1115,7 @@ static void tipc_handler(void *usr_handle,
         goto exit;
     }
 
-    if (consecutive_recv[h->from] >= MAX_CONSECUTIVE_RECV) {
+    if (consecutive_recv[h->from] >= max_consecutive_recv[h->from]) {
         krgnode_set(h->from, nodes_requiring_ack);
         queue_delayed_work(krgcom_wq, &tipc_ack_work, 0);
     }
@@ -1261,6 +1265,42 @@ void krg_node_reachable(kerrighed_node_t nodeid){
 void krg_node_unreachable(kerrighed_node_t nodeid){
 }
 
+void rpc_enable_lowmem_mode(kerrighed_node_t nodeid)
+{
+	if (nodeid < 0 || nodeid >= KERRIGHED_MAX_NODES)
+		return;
+
+	max_consecutive_recv[nodeid] = MAX_CONSECUTIVE_RECV__LOWMEM_MODE;
+	krgnode_set(nodeid, nodes_requiring_ack);
+	queue_delayed_work(krgcom_wq, &tipc_ack_work, 0);
+}
+
+void rpc_disable_lowmem_mode(kerrighed_node_t nodeid)
+{
+	if (nodeid < 0 || nodeid >= KERRIGHED_MAX_NODES)
+		return;
+
+	max_consecutive_recv[nodeid] = MAX_CONSECUTIVE_RECV;
+}
+
+void rpc_enable_local_lowmem_mode(void)
+{
+	int cpuid;
+
+	ack_cleanup_window_size = ACK_CLEANUP_WINDOW_SIZE__LOWMEM_MODE;
+	for_each_online_cpu(cpuid) {
+		struct tx_engine *engine = &per_cpu(tipc_tx_engine, cpuid);
+
+		queue_delayed_work_on(cpuid, krgcom_wq,
+				      &engine->cleanup_not_retx_work, 0);
+	}
+}
+
+void rpc_disable_local_lowmem_mode(void)
+{
+	ack_cleanup_window_size = ACK_CLEANUP_WINDOW_SIZE;
+}
+
 int comlayer_init(void)
 {
 	int res = 0;
@@ -1291,6 +1331,7 @@ int comlayer_init(void)
 		INIT_DELAYED_WORK(&tipc_rx_retry_work[i], tipc_rx_retry_worker);
 		last_cleanup_ack[i] = 0;
 		consecutive_recv[i] = 0;
+		max_consecutive_recv[i] = MAX_CONSECUTIVE_RECV;
 	}
 
 	tipc_net_id = kerrighed_session_id;

@@ -164,6 +164,11 @@ void rpc_free_buffer(struct rpc_data *buf);
 
 s64 rpc_consumed_bytes(void);
 
+void rpc_enable_lowmem_mode(kerrighed_node_t nodeid);
+void rpc_disable_lowmem_mode(kerrighed_node_t nodeid);
+void rpc_enable_local_lowmem_mode(void);
+void rpc_disable_local_lowmem_mode(void);
+
 /*
  * Convenient define
  */
