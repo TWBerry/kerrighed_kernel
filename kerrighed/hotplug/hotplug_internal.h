@@ -8,6 +8,10 @@ extern struct work_struct fail_work;
 int hooks_start(void);
 void hooks_stop(void);
 
+int hotplug_queue_request(struct hotplug_context *ctx);
+int hotplug_start_request(struct hotplug_context *ctx);
+void hotplug_finish_request(struct hotplug_context *ctx);
+
 int __nodes_add(struct hotplug_node_set *node_set);
 
 int repair_monitor(void);

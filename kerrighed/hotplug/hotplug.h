@@ -1,6 +1,10 @@
 #ifndef __HOTPLUG__
 #define __HOTPLUG__
 
+#include <linux/list.h>
+#include <linux/workqueue.h>
+#include <linux/completion.h>
+#include <linux/kref.h>
 #include <kerrighed/krgnodemask.h>
 
 enum {
@@ -29,6 +33,33 @@ struct hotplug_node_set {
 	int subclusterid;
 	krgnodemask_t v;
 };
+
+struct krg_namespace;
+
+struct hotplug_context {
+	struct krg_namespace *ns;
+	struct hotplug_node_set node_set;
+	struct list_head list;
+	struct work_struct work;
+	struct completion ready;
+	struct completion done;
+	int id;
+	int ret;
+	struct kref kref;
+};
+
+struct hotplug_context *hotplug_ctx_alloc(struct krg_namespace *ns);
+void hotplug_ctx_release(struct kref *kref);
+
+static inline void hotplug_ctx_get(struct hotplug_context *ctx)
+{
+	kref_get(&ctx->kref);
+}
+
+static inline void hotplug_ctx_put(struct hotplug_context *ctx)
+{
+	kref_put(&ctx->kref, hotplug_ctx_release);
+}
 
 struct notifier_block;
 

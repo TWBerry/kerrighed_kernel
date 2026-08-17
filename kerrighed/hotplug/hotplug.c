@@ -2,20 +2,322 @@
  *  Copyright (C) 2006-2007, Pascal Gallard, Kerlabs.
  */
 
+#include <linux/idr.h>
+#include <linux/list.h>
 #include <linux/workqueue.h>
+#include <linux/completion.h>
+#include <linux/slab.h>
+#include <linux/rcupdate.h>
 
+#include <kerrighed/hotplug.h>
+#include <kerrighed/namespace.h>
 #include <net/krgrpc/rpcid.h>
 #include <net/krgrpc/rpc.h>
+#include <kerrighed/krginit.h>
 
 #include "hotplug.h"
 #include "hotplug_internal.h"
 
+struct hotplug_request {
+	struct list_head list;
+	kerrighed_node_t node;
+	int id;
+};
+
 struct workqueue_struct *krg_ha_wq;
+static struct workqueue_struct *krg_hotplug_wq;
+
+static DEFINE_IDR(local_hotplug_req_idr);
+static DEFINE_MUTEX(local_hotplug_req_idr_mutex);
+
+static LIST_HEAD(local_hotplug_req_list);
+static DEFINE_MUTEX(local_hotplug_req_list_mutex);
+
+static LIST_HEAD(global_hotplug_req_list);
+static DEFINE_MUTEX(global_hotplug_req_list_mutex);
+
+static kerrighed_node_t hotplug_coordinator;
+static DEFINE_MUTEX(hotplug_coordinator_mutex);
+
+struct hotplug_context *hotplug_ctx_alloc(struct krg_namespace *ns)
+{
+	struct hotplug_context *ctx;
+
+	BUG_ON(!ns);
+	ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return NULL;
+
+	get_krg_ns(ns);
+	ctx->ns = ns;
+	INIT_LIST_HEAD(&ctx->list);
+	init_completion(&ctx->ready);
+	init_completion(&ctx->done);
+	ctx->id = -1;
+	ctx->ret = 0;
+	kref_init(&ctx->kref);
+
+	return ctx;
+}
+
+void hotplug_ctx_release(struct kref *kref)
+{
+	struct hotplug_context *ctx;
+
+	ctx = container_of(kref, struct hotplug_context, kref);
+	put_krg_ns(ctx->ns);
+	kfree(ctx);
+}
+
+int hotplug_queue_request(struct hotplug_context *ctx)
+{
+	int err;
+
+	mutex_lock(&local_hotplug_req_list_mutex);
+
+	err = -ENONET;
+	if (!krgnode_online(kerrighed_node_id))
+		goto unlock;
+
+	err = 0;
+	ctx->ret = 0;
+	list_add_tail(&ctx->list, &local_hotplug_req_list);
+	queue_work(krg_hotplug_wq, &ctx->work);
+
+unlock:
+	mutex_unlock(&local_hotplug_req_list_mutex);
+	return err;
+}
+
+static int hotplug_dequeue_request(struct hotplug_context *ctx)
+{
+	mutex_lock(&local_hotplug_req_list_mutex);
+	list_del_init(&ctx->list);
+	mutex_unlock(&local_hotplug_req_list_mutex);
+
+	return ctx->ret;
+}
+
+static void hotplug_cancel_all_requests(void)
+{
+	struct hotplug_context *ctx;
+
+	mutex_lock(&local_hotplug_req_list_mutex);
+	list_for_each_entry(ctx, &local_hotplug_req_list, list) {
+		ctx->ret = -EINTR;
+		complete(&ctx->done);
+	}
+	mutex_unlock(&local_hotplug_req_list_mutex);
+}
+
+struct hotplug_run_req_msg {
+	int req_id;
+};
+
+static void handle_hotplug_run_req(struct rpc_desc *desc, void *_msg,
+				   size_t size)
+{
+	struct hotplug_run_req_msg *msg = _msg;
+	struct hotplug_context *ctx;
+
+	mutex_lock(&local_hotplug_req_idr_mutex);
+	ctx = idr_find(&local_hotplug_req_idr, msg->req_id);
+	mutex_unlock(&local_hotplug_req_idr_mutex);
+	BUG_ON(!ctx);
+
+	ctx->ret = 0;
+	complete(&ctx->ready);
+}
+
+static int hotplug_run_request(struct hotplug_request *req)
+{
+	struct hotplug_run_req_msg msg;
+
+	msg.req_id = req->id;
+	return rpc_async(HOTPLUG_RUN_REQ, req->node, &msg, sizeof(msg));
+}
+
+struct hotplug_start_req_msg {
+	int req_id;
+};
+
+static int handle_hotplug_start_req(struct rpc_desc *desc, void *_msg,
+				    size_t size)
+{
+	struct hotplug_start_req_msg *msg = _msg;
+	struct hotplug_request *req;
+	int err;
+
+	err = -ENOMEM;
+	req = kmalloc(sizeof(*req), GFP_KERNEL);
+	if (!req)
+		goto out;
+
+	req->node = rpc_desc_get_client(desc);
+	BUG_ON(req->node == KERRIGHED_NODE_ID_NONE);
+	req->id = msg->req_id;
+
+	mutex_lock(&global_hotplug_req_list_mutex);
+	err = 0;
+	if (list_empty(&global_hotplug_req_list))
+		err = hotplug_run_request(req);
+	if (!err)
+		list_add_tail(&req->list, &global_hotplug_req_list);
+	mutex_unlock(&global_hotplug_req_list_mutex);
+
+	if (err)
+		kfree(req);
+out:
+	return err;
+}
+
+int hotplug_start_request(struct hotplug_context *ctx)
+{
+	struct hotplug_start_req_msg msg;
+	struct rpc_desc *desc;
+	int err, ret;
+
+	mutex_lock(&hotplug_coordinator_mutex);
+	err = hotplug_dequeue_request(ctx);
+	if (err)
+		goto unlock;
+
+	err = -ENOMEM;
+	if (!idr_pre_get(&local_hotplug_req_idr, GFP_KERNEL))
+		goto unlock;
+
+	mutex_lock(&local_hotplug_req_idr_mutex);
+	err = idr_get_new(&local_hotplug_req_idr, ctx, &ctx->id);
+	mutex_unlock(&local_hotplug_req_idr_mutex);
+	if (err)
+		goto unlock;
+
+	err = -ENOMEM;
+	desc = rpc_begin(HOTPLUG_START_REQ, hotplug_coordinator);
+	if (!desc)
+		goto out_remove_id;
+
+	msg.req_id = ctx->id;
+	err = rpc_pack_type(desc, msg);
+	if (err)
+		goto out_end;
+	err = rpc_unpack_type(desc, ret);
+	if (err) {
+		if (err > 0)
+			err = -EPIPE;
+		goto out_end;
+	}
+	if (ret)
+		err = ret;
+out_end:
+	rpc_end(desc, 0);
+out_remove_id:
+	if (err) {
+		mutex_lock(&local_hotplug_req_idr_mutex);
+		idr_remove(&local_hotplug_req_idr, ctx->id);
+		mutex_unlock(&local_hotplug_req_idr_mutex);
+		ctx->id = -1;
+	}
+unlock:
+	mutex_unlock(&hotplug_coordinator_mutex);
+
+	if (!err) {
+		wait_for_completion(&ctx->ready);
+		err = ctx->ret;
+	}
+	return err;
+}
+
+struct hotplug_finish_req_msg {
+	int req_id;
+};
+
+static int handle_hotplug_finish_req(struct rpc_desc *desc, void *_msg,
+				     size_t size)
+{
+	struct hotplug_finish_req_msg *msg = _msg;
+	struct hotplug_request *req, *tmp;
+	int err;
+
+	mutex_lock(&global_hotplug_req_list_mutex);
+
+	BUG_ON(list_empty(&global_hotplug_req_list));
+	req = list_first_entry(&global_hotplug_req_list,
+			       struct hotplug_request, list);
+	BUG_ON(req->node != rpc_desc_get_client(desc));
+	BUG_ON(req->id != msg->req_id);
+	list_del(&req->list);
+	kfree(req);
+
+	list_for_each_entry_safe(req, tmp, &global_hotplug_req_list, list) {
+		if (!krgnode_online(req->node)) {
+			list_del(&req->list);
+			kfree(req);
+			continue;
+		}
+
+		err = hotplug_run_request(req);
+		if (err) {
+			printk(KERN_WARNING
+			       "kerrighed: Could not run hotplug request from node %d! err = %d\n",
+			       req->node, err);
+			printk(KERN_WARNING
+			       "kerrighed: Hotplug coordinator hung!\n");
+		}
+		break;
+	}
+
+	mutex_unlock(&global_hotplug_req_list_mutex);
+	return 0;
+}
+
+void hotplug_finish_request(struct hotplug_context *ctx)
+{
+	struct hotplug_finish_req_msg msg;
+	struct rpc_desc *desc;
+	int err, ret;
+
+	mutex_lock(&hotplug_coordinator_mutex);
+
+	err = -ENOMEM;
+	desc = rpc_begin(HOTPLUG_FINISH_REQ, hotplug_coordinator);
+	if (!desc)
+		goto unlock;
+
+	msg.req_id = ctx->id;
+	err = rpc_pack_type(desc, msg);
+	if (err)
+		goto out_end;
+	err = rpc_unpack_type(desc, ret);
+	if (err > 0)
+		err = -EPIPE;
+
+	mutex_lock(&local_hotplug_req_idr_mutex);
+	idr_remove(&local_hotplug_req_idr, ctx->id);
+	mutex_unlock(&local_hotplug_req_idr_mutex);
+	ctx->id = -1;
+out_end:
+	rpc_end(desc, 0);
+unlock:
+	mutex_unlock(&hotplug_coordinator_mutex);
+
+	if (err) {
+		printk(KERN_WARNING
+		       "kerrighed: Could not notify hotplug coordinator: err = %d\n",
+		       err);
+		printk(KERN_WARNING
+		       "kerrighed: Hotplug coordinator will probably hang!\n");
+	}
+}
 
 int init_hotplug(void)
 {
 	krg_ha_wq = create_workqueue("krgHA");
 	BUG_ON(krg_ha_wq == NULL);
+
+	krg_hotplug_wq = create_singlethread_workqueue("krg_hotplug");
+	if (!krg_hotplug_wq)
+		panic("kerrighed: Couldn't create hotplug workqueue!\n");
 
 	hotplug_hooks_init();
 
@@ -28,9 +330,14 @@ int init_hotplug(void)
 	hotplug_namespace_init();
 	hotplug_membership_init();
 
+	rpc_register_int(HOTPLUG_START_REQ, handle_hotplug_start_req, 0);
+	rpc_register_int(HOTPLUG_FINISH_REQ, handle_hotplug_finish_req, 0);
+	rpc_register_void(HOTPLUG_RUN_REQ, handle_hotplug_run_req, 0);
+
 	return 0;
 };
 
 void cleanup_hotplug(void)
 {
+	hotplug_cancel_all_requests();
 };
