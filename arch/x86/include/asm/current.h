@@ -15,11 +15,24 @@ static __always_inline struct task_struct *get_current(void)
 }
 
 #ifdef CONFIG_KRG_EPM
-#define krg_current (get_current()->effective_current)
-#define current ({							\
-	struct task_struct *__cur = get_current();			\
-	__cur->effective_current ? __cur->effective_current : __cur;	\
-})
+/*
+ * Keep the Kerrighed effective-current semantics while avoiding a direct
+ * dereference of an incomplete struct task_struct from this header.
+ */
+struct task_struct *krg_get_current(void);
+struct task_struct **krg_current_ptr(void);
+
+#define krg_current (*krg_current_ptr())
+#define current krg_get_current()
+
+#define krg_current_save(tmp) do {  \
+		(tmp) = krg_current;  \
+		krg_current = NULL; \
+	} while (0)
+#define krg_current_restore(tmp) do { \
+		krg_current = (tmp);    \
+	} while (0)
+
 #else /* !CONFIG_KRG_EPM */
 #define current get_current()
 #endif /* !CONFIG_KRG_EPM */

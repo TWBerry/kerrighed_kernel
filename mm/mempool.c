@@ -203,6 +203,9 @@ void * mempool_alloc(mempool_t *pool, gfp_t gfp_mask)
 	unsigned long flags;
 	wait_queue_t wait;
 	gfp_t gfp_temp;
+#ifdef CONFIG_KRG_EPM
+	struct task_struct *krg_cur;
+#endif
 
 	might_sleep_if(gfp_mask & __GFP_WAIT);
 
@@ -249,6 +252,9 @@ repeat_alloc:
 	}
 
 	/* Let's wait for someone else to return an element to @pool */
+#ifdef CONFIG_KRG_EPM
+	krg_current_save(krg_cur);
+#endif
 	init_wait(&wait);
 	prepare_to_wait(&pool->wait, &wait, TASK_UNINTERRUPTIBLE);
 
@@ -261,6 +267,9 @@ repeat_alloc:
 	io_schedule_timeout(5*HZ);
 
 	finish_wait(&pool->wait, &wait);
+#ifdef CONFIG_KRG_EPM
+	krg_current_restore(krg_cur);
+#endif
 	goto repeat_alloc;
 }
 EXPORT_SYMBOL(mempool_alloc);

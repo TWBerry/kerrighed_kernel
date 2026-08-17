@@ -585,10 +585,18 @@ long congestion_wait(int sync, long timeout)
 	unsigned long start = jiffies;
 	DEFINE_WAIT(wait);
 	wait_queue_head_t *wqh = &congestion_wqh[sync];
+#ifdef CONFIG_KRG_EPM
+	struct task_struct *krg_cur;
+
+	krg_current_save(krg_cur);
+#endif
 
 	prepare_to_wait(wqh, &wait, TASK_UNINTERRUPTIBLE);
 	ret = io_schedule_timeout(timeout);
 	finish_wait(wqh, &wait);
+#ifdef CONFIG_KRG_EPM
+	krg_current_restore(krg_cur);
+#endif
 
 	trace_writeback_congestion_wait(jiffies_to_usecs(timeout),
 					jiffies_to_usecs(jiffies - start));
@@ -621,6 +629,11 @@ long wait_iff_congested(struct zone *zone, int sync, long timeout)
 	unsigned long start = jiffies;
 	DEFINE_WAIT(wait);
 	wait_queue_head_t *wqh = &congestion_wqh[sync];
+#ifdef CONFIG_KRG_EPM
+	struct task_struct *krg_cur;
+
+	krg_current_save(krg_cur);
+#endif
 
 	/*
 	 * If there is no congestion, or heavy congestion is not being
@@ -645,6 +658,9 @@ long wait_iff_congested(struct zone *zone, int sync, long timeout)
 	finish_wait(wqh, &wait);
 
 out:
+#ifdef CONFIG_KRG_EPM
+	krg_current_restore(krg_cur);
+#endif
 	trace_writeback_wait_iff_congested(jiffies_to_usecs(timeout),
 					jiffies_to_usecs(jiffies - start));
 

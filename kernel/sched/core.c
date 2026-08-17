@@ -98,6 +98,30 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
+#ifdef CONFIG_KRG_EPM
+/*
+ * current.h can be included before struct task_struct is complete.
+ * Keep the actual effective_current dereference here, where task_struct
+ * is fully defined.  get_current() always denotes the physical task.
+ */
+notrace struct task_struct **krg_current_ptr(void)
+{
+	struct task_struct *tsk = get_current();
+
+	return &tsk->effective_current;
+}
+EXPORT_SYMBOL(krg_current_ptr);
+
+notrace struct task_struct *krg_get_current(void)
+{
+	struct task_struct *tsk = get_current();
+	struct task_struct *effective = tsk->effective_current;
+
+	return effective ? effective : tsk;
+}
+EXPORT_SYMBOL(krg_get_current);
+#endif /* CONFIG_KRG_EPM */
+
 #ifdef smp_mb__before_atomic
 void __smp_mb__before_atomic(void)
 {
@@ -3550,6 +3574,11 @@ static void __sched __schedule(void)
 	unsigned long *switch_count;
 	struct rq *rq;
 	int cpu;
+#ifdef CONFIG_KRG_EPM
+	struct task_struct *krg_cur;
+
+	krg_current_save(krg_cur);
+#endif
 
 need_resched:
 	preempt_disable();
@@ -3642,6 +3671,9 @@ need_resched:
 	sched_preempt_enable_no_resched();
 	if (need_resched())
 		goto need_resched;
+#ifdef CONFIG_KRG_EPM
+	krg_current_restore(krg_cur);
+#endif
 }
 STACK_FRAME_NON_STANDARD(__schedule); /* switch_to() */
 
@@ -3659,10 +3691,23 @@ static inline void sched_submit_work(struct task_struct *tsk)
 
 asmlinkage void __sched schedule(void)
 {
-	struct task_struct *tsk = current;
+	struct task_struct *tsk;
+#ifdef CONFIG_KRG_EPM
+	struct task_struct *krg_cur;
 
+	/*
+	 * Linux 3.10 performs scheduler submit work before __schedule().
+	 * Keep that scheduler-side work on the physical task too.
+	 */
+	krg_current_save(krg_cur);
+#endif
+
+	tsk = current;
 	sched_submit_work(tsk);
 	__schedule();
+#ifdef CONFIG_KRG_EPM
+	krg_current_restore(krg_cur);
+#endif
 }
 EXPORT_SYMBOL(schedule);
 
@@ -5748,8 +5793,16 @@ EXPORT_SYMBOL(__cond_resched_softirq);
  */
 void __sched yield(void)
 {
+#ifdef CONFIG_KRG_EPM
+	struct task_struct *krg_cur;
+
+	krg_current_save(krg_cur);
+#endif
 	set_current_state(TASK_RUNNING);
 	sys_sched_yield();
+#ifdef CONFIG_KRG_EPM
+	krg_current_restore(krg_cur);
+#endif
 }
 EXPORT_SYMBOL(yield);
 
