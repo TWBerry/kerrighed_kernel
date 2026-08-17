@@ -770,6 +770,10 @@ const char * const vmstat_text[] = {
 	"nr_active_anon",
 	"nr_inactive_file",
 	"nr_active_file",
+#ifdef CONFIG_KRG_MM
+	"nr_inactive_migr",
+	"nr_active_migr",
+#endif
 	"nr_unevictable",
 	"nr_mlock",
 	"nr_anon_pages",

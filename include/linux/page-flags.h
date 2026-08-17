@@ -98,6 +98,7 @@ enum pageflags {
 #ifdef CONFIG_KRG_MM
 	PG_to_invalidate,
 	PG_to_set_read_only,
+	PG_migratable,		/* Kerrighed page eligible for remote injection */
 #ifdef CONFIG_DEBUG_PAGEALLOC
 	PG_in_vec,
 #endif
@@ -352,6 +353,7 @@ u64 stable_page_flags(struct page *page);
 #ifdef CONFIG_KRG_MM
 PAGEFLAG(ToInvalidate, to_invalidate)
 PAGEFLAG(ToSetReadOnly, to_set_read_only)
+PAGEFLAG(Migratable, migratable)
 #ifdef CONFIG_DEBUG_PAGEALLOC
 PAGEFLAG(InVec, in_vec)
 #endif

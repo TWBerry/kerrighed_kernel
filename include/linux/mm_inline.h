@@ -50,6 +50,10 @@ static __always_inline void del_page_from_lru_list(struct page *page,
  */
 static inline enum lru_list page_lru_base_type(struct page *page)
 {
+#ifdef CONFIG_KRG_MM
+	if (PageMigratable(page))
+		return LRU_INACTIVE_MIGR;
+#endif
 	if (page_is_file_cache(page))
 		return LRU_INACTIVE_FILE;
 	return LRU_INACTIVE_ANON;

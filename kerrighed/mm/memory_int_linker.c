@@ -40,13 +40,17 @@ struct vm_operations_struct null_vm_ops = {};
  *  The kddm_set is created empty. The caller must fill it with existing
  *  pages.
  */
-int create_anon_vma_kddm_set (struct mm_struct *mm)
+int create_anon_vma_kddm_set(struct task_struct *tsk, struct mm_struct *mm)
 {
+	struct anon_vma_kddm_set_private private;
 	struct kddm_set *set;
+
+	private.last_pid = task_pid_knr(tsk);
+	private.last_tgid = task_tgid_knr(tsk);
 
 	set = __create_new_kddm_set(kddm_def_ns, 0, &kddm_pt_set_ops, mm,
 				    MEMORY_LINKER, kerrighed_node_id,
-				    PAGE_SIZE, NULL, 0, 0);
+				    PAGE_SIZE, &private, sizeof(private), 0);
 
 	if (IS_ERR(set))
 		return PTR_ERR(set);
@@ -276,6 +280,9 @@ done:
 		}
 	}
 
+	if (cap_raised(current->krg_caps.effective, CAP_USE_REMOTE_MEMORY))
+		SetPageMigratable(page);
+
 	vmf->page = page;
 
 	_kddm_put_object (set, objid);
@@ -323,6 +330,9 @@ struct page *anon_memory_wppage (struct vm_area_struct *vma,
 
 	if (old_page && old_page != page)
 		copy_user_highpage(page, old_page, address, vma);
+
+	if (cap_raised(current->krg_caps.effective, CAP_USE_REMOTE_MEMORY))
+		SetPageMigratable(page);
 
 	_kddm_put_object (set, objid);
 

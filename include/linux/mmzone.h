@@ -115,6 +115,10 @@ enum zone_stat_item {
 	NR_ACTIVE_ANON,		/*  "     "     "   "       "         */
 	NR_INACTIVE_FILE,	/*  "     "     "   "       "         */
 	NR_ACTIVE_FILE,		/*  "     "     "   "       "         */
+#ifdef CONFIG_KRG_MM
+	NR_INACTIVE_MIGR,
+	NR_ACTIVE_MIGR,
+#endif
 	NR_UNEVICTABLE,		/*  "     "     "   "       "         */
 	NR_MLOCK,		/* mlock()ed pages found and moved off LRU */
 	NR_ANON_PAGES,	/* Mapped anonymous pages */
@@ -165,28 +169,51 @@ enum zone_stat_item {
 #define LRU_BASE 0
 #define LRU_ACTIVE 1
 #define LRU_FILE 2
+#ifdef CONFIG_KRG_MM
+#define LRU_MIGR 4
+#endif
 
 enum lru_list {
 	LRU_INACTIVE_ANON = LRU_BASE,
 	LRU_ACTIVE_ANON = LRU_BASE + LRU_ACTIVE,
 	LRU_INACTIVE_FILE = LRU_BASE + LRU_FILE,
 	LRU_ACTIVE_FILE = LRU_BASE + LRU_FILE + LRU_ACTIVE,
+#ifdef CONFIG_KRG_MM
+	LRU_INACTIVE_MIGR = LRU_BASE + LRU_MIGR,
+	LRU_ACTIVE_MIGR = LRU_BASE + LRU_MIGR + LRU_ACTIVE,
+#endif
 	LRU_UNEVICTABLE,
 	NR_LRU_LISTS
 };
 
 #define for_each_lru(lru) for (lru = 0; lru < NR_LRU_LISTS; lru++)
 
+#ifdef CONFIG_KRG_MM
+#define for_each_evictable_lru(lru) for (lru = 0; lru <= LRU_ACTIVE_MIGR; lru++)
+#else
 #define for_each_evictable_lru(lru) for (lru = 0; lru <= LRU_ACTIVE_FILE; lru++)
+#endif
 
 static inline int is_file_lru(enum lru_list lru)
 {
 	return (lru == LRU_INACTIVE_FILE || lru == LRU_ACTIVE_FILE);
 }
 
+#ifdef CONFIG_KRG_MM
+static inline int is_kddm_lru(enum lru_list lru)
+{
+	return (lru == LRU_INACTIVE_MIGR || lru == LRU_ACTIVE_MIGR);
+}
+#endif
+
 static inline int is_active_lru(enum lru_list lru)
 {
+#ifdef CONFIG_KRG_MM
+	return (lru == LRU_ACTIVE_ANON || lru == LRU_ACTIVE_FILE ||
+		lru == LRU_ACTIVE_MIGR);
+#else
 	return (lru == LRU_ACTIVE_ANON || lru == LRU_ACTIVE_FILE);
+#endif
 }
 
 static inline int is_unevictable_lru(enum lru_list lru)
@@ -203,8 +230,14 @@ struct zone_reclaim_stat {
 	 *
 	 * The anon LRU stats live in [0], file LRU stats in [1]
 	 */
+#ifdef CONFIG_KRG_MM
+	/* Kerrighed migratable LRU statistics live in slot 2. */
+	unsigned long		recent_rotated[3];
+	unsigned long		recent_scanned[3];
+#else
 	unsigned long		recent_rotated[2];
 	unsigned long		recent_scanned[2];
+#endif
 };
 
 struct lruvec {
