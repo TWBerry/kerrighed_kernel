@@ -9,12 +9,23 @@
 #include <linux/mutex.h>
 #include <linux/completion.h>
 #include <linux/string.h>
+#include <linux/capability.h>
+#include <linux/limits.h>
+#include <linux/kthread.h>
+#include <linux/sysfs.h>
+#include <linux/kobject.h>
+#include <linux/ipc.h>
+#include <linux/fs.h>
+#include <linux/cred.h>
 #include <asm/uaccess.h>
 #include <asm/ioctl.h>
 #include <kerrighed/sys/types.h>
 #include <kerrighed/krginit.h>
 #include <kerrighed/hotplug.h>
 #include <kerrighed/krgnodemask.h>
+#include <kerrighed/namespace.h>
+
+extern struct kobject *krghotplugsys;
 
 #include <kerrighed/krgflags.h>
 
@@ -52,6 +63,321 @@ static int cluster_start_in_progress;
 static DEFINE_SPINLOCK(cluster_start_lock);
 static DEFINE_MUTEX(cluster_start_mutex);
 static DECLARE_COMPLETION(cluster_started);
+
+
+#ifdef CONFIG_KRG_IPC
+#define CLUSTER_INIT_OPT_CLONE_FLAGS_IPC CLONE_NEWIPC
+#else
+#define CLUSTER_INIT_OPT_CLONE_FLAGS_IPC 0
+#endif
+#ifdef CONFIG_KRG_PROC
+#define CLUSTER_INIT_OPT_CLONE_FLAGS_PID CLONE_NEWPID
+#else
+#define CLUSTER_INIT_OPT_CLONE_FLAGS_PID 0
+#endif
+
+static unsigned long cluster_init_opt_clone_flags =
+    CLUSTER_INIT_OPT_CLONE_FLAGS_IPC | CLUSTER_INIT_OPT_CLONE_FLAGS_PID;
+static DEFINE_SPINLOCK(cluster_init_opt_clone_flags_lock);
+
+static char cluster_init_helper_path[PATH_MAX];
+static char *cluster_init_helper_argv[] = {
+    cluster_init_helper_path,
+    NULL
+};
+static char *cluster_init_helper_envp[] = {
+    "HOME=/",
+    "PATH=/sbin:/bin:/usr/sbin:/usr/bin",
+    NULL
+};
+static struct cred *cluster_init_helper_cred;
+static struct krg_namespace *cluster_init_helper_ns;
+static struct completion cluster_init_helper_ready;
+static struct completion krg_container_continue;
+static struct completion krg_container_done;
+
+#define DEFINE_ISOLATE_ATTR(_name, _flag)                                      \
+static ssize_t isolate_##_name##_show(struct kobject *obj,                     \
+                                      struct kobj_attribute *attr, char *page)  \
+{                                                                              \
+    return sprintf(page, "%d\\n", !!(cluster_init_opt_clone_flags & (_flag)));\
+}                                                                              \
+static ssize_t isolate_##_name##_store(struct kobject *obj,                    \
+                                       struct kobj_attribute *attr,             \
+                                       const char *page, size_t count)          \
+{                                                                              \
+    unsigned long val = simple_strtoul(page, NULL, 0);                         \
+    spin_lock(&cluster_init_opt_clone_flags_lock);                              \
+    if (val)                                                                    \
+        cluster_init_opt_clone_flags |= (_flag);                               \
+    else                                                                        \
+        cluster_init_opt_clone_flags &= ~(_flag);                              \
+    spin_unlock(&cluster_init_opt_clone_flags_lock);                            \
+    return count;                                                               \
+}                                                                              \
+static struct kobj_attribute isolate_##_name##_attr =                          \
+    __ATTR(isolate_##_name, 0644, isolate_##_name##_show,                      \
+           isolate_##_name##_store)
+
+DEFINE_ISOLATE_ATTR(uts, CLONE_NEWUTS);
+#ifndef CONFIG_KRG_IPC
+DEFINE_ISOLATE_ATTR(ipc, CLONE_NEWIPC);
+#else
+static ssize_t isolate_ipc_show(struct kobject *obj,
+                                struct kobj_attribute *attr, char *page)
+{
+    return sprintf(page, "%d\n", !!(cluster_init_opt_clone_flags & CLONE_NEWIPC));
+}
+static struct kobj_attribute isolate_ipc_attr =
+    __ATTR(isolate_ipc, 0444, isolate_ipc_show, NULL);
+#endif
+DEFINE_ISOLATE_ATTR(mnt, CLONE_NEWNS);
+#ifndef CONFIG_KRG_PROC
+DEFINE_ISOLATE_ATTR(pid, CLONE_NEWPID);
+#else
+static ssize_t isolate_pid_show(struct kobject *obj,
+                                struct kobj_attribute *attr, char *page)
+{
+    return sprintf(page, "%d\n", !!(cluster_init_opt_clone_flags & CLONE_NEWPID));
+}
+static struct kobj_attribute isolate_pid_attr =
+    __ATTR(isolate_pid, 0444, isolate_pid_show, NULL);
+#endif
+DEFINE_ISOLATE_ATTR(net, CLONE_NEWNET);
+#ifdef CLONE_NEWUSER
+DEFINE_ISOLATE_ATTR(user, CLONE_NEWUSER);
+#endif
+
+static ssize_t cluster_init_helper_show(struct kobject *obj,
+                                        struct kobj_attribute *attr, char *page)
+{
+    return sprintf(page, "%s\n", cluster_init_helper_path);
+}
+
+static ssize_t cluster_init_helper_store(struct kobject *obj,
+                                         struct kobj_attribute *attr,
+                                         const char *page, size_t count)
+{
+    size_t len = count;
+
+    if (len && page[len - 1] == '\n')
+        len--;
+    if (len >= sizeof(cluster_init_helper_path))
+        return -ENAMETOOLONG;
+
+    mutex_lock(&cluster_start_mutex);
+    memcpy(cluster_init_helper_path, page, len);
+    cluster_init_helper_path[len] = '\0';
+    mutex_unlock(&cluster_start_mutex);
+    return count;
+}
+
+static struct kobj_attribute cluster_init_helper_attr =
+    __ATTR(cluster_init_helper, 0644,
+           cluster_init_helper_show, cluster_init_helper_store);
+
+static struct attribute *cluster_container_attrs[] = {
+    &isolate_uts_attr.attr,
+    &isolate_ipc_attr.attr,
+    &isolate_mnt_attr.attr,
+    &isolate_pid_attr.attr,
+    &isolate_net_attr.attr,
+#ifdef CLONE_NEWUSER
+    &isolate_user_attr.attr,
+#endif
+    &cluster_init_helper_attr.attr,
+    NULL,
+};
+
+static const struct attribute_group cluster_container_attr_group = {
+    .attrs = cluster_container_attrs,
+};
+
+
+static void krg_container_abort(int err)
+{
+    struct krg_namespace *ns = cluster_init_helper_ns;
+
+    if (IS_ERR_OR_NULL(ns))
+        return;
+    complete(&ns->root_task_continue_exit);
+    put_krg_ns(ns);
+    cluster_init_helper_ns = ERR_PTR(err);
+    complete(&cluster_init_helper_ready);
+}
+
+static bool krg_container_may_conflict(struct krg_namespace *ns)
+{
+    struct task_struct *root_task = ns->root_task;
+    struct task_struct *g, *t;
+#ifndef CONFIG_KRG_PROC
+    struct nsproxy *nsp;
+#endif
+    bool conflict = false;
+
+    rcu_read_lock();
+    qread_lock(&tasklist_lock);
+    do_each_thread(g, t) {
+        if (t == root_task)
+            continue;
+#ifdef CONFIG_KRG_PROC
+        if (task_active_pid_ns(t)->krg_ns == ns)
+#else
+        nsp = task_nsproxy(t);
+        if (nsp && nsp->krg_ns == ns)
+#endif
+        {
+            conflict = true;
+            break;
+        }
+    } while_each_thread(g, t);
+    qread_unlock(&tasklist_lock);
+    rcu_read_unlock();
+    if (conflict)
+        return true;
+
+#ifdef CONFIG_KRG_IPC
+    if (root_task->nsproxy->ipc_ns != ns->root_nsproxy.ipc_ns ||
+        ipc_used(ns->root_nsproxy.ipc_ns))
+        conflict = true;
+#endif
+    return conflict;
+}
+
+static int krg_container_cleanup(struct krg_namespace *ns)
+{
+    /*
+     * Original Kerrighed also cleaned the distributed PID map here.
+     * EPM/pidmap has not been restored in the Linux 3.10 port yet.
+     * Reconnect that cleanup together with the EPM subsystem.
+     */
+    (void)ns;
+
+#ifdef CONFIG_KRG_IPC
+    cleanup_ipc_objects();
+#endif
+    return 0;
+}
+
+static void krg_container_run(void)
+{
+    complete(&cluster_init_helper_ready);
+    wait_for_completion(&krg_container_continue);
+    complete(&krg_container_done);
+}
+
+static int krg_container_init(void *arg)
+{
+    struct krg_namespace *ns;
+    int err;
+
+    spin_lock_irq(&current->sighand->siglock);
+    flush_signal_handlers(current, 1);
+    sigemptyset(&current->blocked);
+    recalc_sigpending();
+    spin_unlock_irq(&current->sighand->siglock);
+
+    commit_creds(cluster_init_helper_cred);
+    cluster_init_helper_cred = NULL;
+    set_cpus_allowed_ptr(current, cpu_all_mask);
+    set_user_nice(current, 0);
+
+    BUG_ON(cluster_init_helper_ns);
+    ns = current->nsproxy->krg_ns;
+    if (!ns) {
+        cluster_init_helper_ns = ERR_PTR(-EPERM);
+        complete(&cluster_init_helper_ready);
+        return 0;
+    }
+    get_krg_ns(ns);
+    cluster_init_helper_ns = ns;
+
+    err = do_execve(getname_kernel(cluster_init_helper_path),
+                    (const char __user *const __user *)cluster_init_helper_argv,
+                    (const char __user *const __user *)cluster_init_helper_envp);
+    if (!err)
+        return 0;
+
+    pr_err("kerrighed: could not execute container init '%s': err=%d\n",
+           cluster_init_helper_path, err);
+    krg_container_abort(err);
+    return 0;
+}
+
+static int __create_krg_container(void *arg)
+{
+    unsigned long clone_flags;
+    int ret;
+
+    ret = krg_set_cluster_creator((void *)1);
+    if (ret)
+        goto err;
+    clone_flags = cluster_init_opt_clone_flags | SIGCHLD;
+    ret = kernel_thread(krg_container_init, NULL, clone_flags);
+    krg_set_cluster_creator(NULL);
+    if (ret < 0)
+        goto err;
+    return 0;
+err:
+    if (cluster_init_helper_cred) {
+        put_cred(cluster_init_helper_cred);
+        cluster_init_helper_cred = NULL;
+    }
+    cluster_init_helper_ns = ERR_PTR(ret);
+    complete(&cluster_init_helper_ready);
+    return ret;
+}
+
+static __maybe_unused struct krg_namespace *create_krg_container(struct krg_namespace *ns)
+{
+    struct task_struct *t;
+
+    if (ns) {
+        put_krg_ns(ns);
+        return NULL;
+    }
+    if (!cluster_init_helper_path[0])
+        return NULL;
+
+    BUG_ON(cluster_init_helper_ns);
+    init_completion(&cluster_init_helper_ready);
+
+    BUG_ON(cluster_init_helper_cred);
+    cluster_init_helper_cred = prepare_kernel_cred(current);
+    if (!cluster_init_helper_cred)
+        return NULL;
+
+    t = kthread_run(__create_krg_container, NULL, "krg_init_helper");
+    if (IS_ERR(t)) {
+        put_cred(cluster_init_helper_cred);
+        cluster_init_helper_cred = NULL;
+        return NULL;
+    }
+
+    wait_for_completion(&cluster_init_helper_ready);
+    if (IS_ERR(cluster_init_helper_ns))
+        ns = NULL;
+    else
+        ns = cluster_init_helper_ns;
+    cluster_init_helper_ns = NULL;
+    return ns;
+}
+
+static int container_node_ready(void __user *arg)
+{
+    struct krg_namespace *ns = current->nsproxy->krg_ns;
+
+    if (!ns)
+        return -EPERM;
+    if (ns != cluster_init_helper_ns)
+        return 0;
+    if (krg_container_may_conflict(ns))
+        return -EBUSY;
+    if (krg_container_cleanup(ns))
+        return -EBUSY;
+    krg_container_run();
+    return 0;
+}
 
 static void init_prekerrighed_process(void)
 {
@@ -343,6 +669,9 @@ int krgnodemask_copy_from_user(krgnodemask_t *dstp, __krgnodemask_t *srcp)
 int hotplug_cluster_init(void)
 {
 	int bcl;
+
+	if (sysfs_create_group(krghotplugsys, &cluster_container_attr_group))
+		return -ENOMEM;
 	
 	for (bcl = 0; bcl < KERRIGHED_MAX_CLUSTERS; bcl++) {
 		clusters_status[bcl] = CLUSTER_UNDEF;
@@ -353,6 +682,7 @@ int hotplug_cluster_init(void)
 	register_proc_service(KSYS_HOTPLUG_START, cluster_start);
 	register_proc_service(KSYS_HOTPLUG_WAIT_FOR_START,
 			      cluster_wait_for_start);
+	register_proc_service(KSYS_HOTPLUG_READY, container_node_ready);
 	register_proc_service(KSYS_HOTPLUG_SHUTDOWN, cluster_stop);
 	register_proc_service(KSYS_HOTPLUG_RESTART, cluster_restart);
 	register_proc_service(KSYS_HOTPLUG_STATUS, cluster_status);
