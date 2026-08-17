@@ -273,6 +273,11 @@ struct rmap_walk_control {
 
 int rmap_walk(struct page *page, struct rmap_walk_control *rwc);
 
+#ifdef CONFIG_KRG_MM
+int krg_try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
+                         unsigned long address);
+#endif
+
 #else	/* !CONFIG_MMU */
 
 #define anon_vma_init()		do {} while (0)
@@ -309,6 +314,9 @@ static inline int page_mkclean(struct page *page)
 #define SWAP_FAIL	2
 #define SWAP_MLOCK	3
 #define SWAP_LZFREE	4
+#ifdef CONFIG_KRG_MM
+#define SWAP_FLUSH_FAIL	5
+#endif
 
 #ifdef CONFIG_KRG_MM
 extern struct kmem_cache *anon_vma_cachep;

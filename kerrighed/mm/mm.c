@@ -18,12 +18,16 @@
 #include <kerrighed/mm.h>
 #include <kerrighed/hotplug.h>
 #include <kddm/kddm.h>
+#include "injection.h"
 #include "page_table_tree.h"
 #include "mm_struct.h"
 #include "memory_int_linker.h"
 #include "memory_io_linker.h"
 #include "mm_struct_io_linker.h"
 #include "mm_server.h"
+
+extern int mm_notification(struct notifier_block *nb, hotplug_event_t event,
+			   void *data);
 
 
 /** Initialisation of the DSM module.
@@ -56,6 +60,9 @@ int init_kermm(void)
 
 	mm_struct_init ();
 	mm_server_init();
+	mm_injection_init();
+
+	register_hotplug_notifier(mm_notification, HOTPLUG_PRIO_MM);
 
 	printk ("KerMM initialisation done\n");
 
@@ -73,6 +80,7 @@ void cleanup_kermm (void)
 {
 	printk ("KerMM termination : start\n");
 
+	mm_injection_finalize();
 	mm_server_finalize();
 	mm_struct_finalize();
 

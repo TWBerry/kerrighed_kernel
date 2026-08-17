@@ -1791,6 +1791,19 @@ static int page_not_mapped(struct page *page)
  * SWAP_FAIL	- the page is unswappable
  * SWAP_MLOCK	- page is mlocked.
  */
+#ifdef CONFIG_KRG_MM
+int krg_try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
+                         unsigned long address)
+{
+	struct rmap_private rp = {
+		.flags = 0,
+		.lazyfreed = 0,
+	};
+
+	return try_to_unmap_one(page, vma, address, &rp);
+}
+#endif
+
 int try_to_unmap(struct page *page, enum ttu_flags flags)
 {
 	int ret;

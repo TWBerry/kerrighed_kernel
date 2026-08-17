@@ -16,6 +16,10 @@
 #endif
 #endif
 
+struct page;
+int try_to_flush_page(struct page *page);
+void krg_notify_mem(int mem_usage);
+
 #define DUP_ANON_ONLY 0x00000001
 
 /** Exported Functions **/

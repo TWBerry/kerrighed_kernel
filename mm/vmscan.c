@@ -53,6 +53,10 @@
 #include <linux/balloon_compaction.h>
 
 #include "internal.h"
+#ifdef CONFIG_KRG_MM
+#include <kerrighed/mm.h>
+#include <net/krgrpc/rpc.h>
+#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
@@ -788,6 +792,31 @@ static void page_check_dirty_writeback(struct page *page,
 		mapping->a_ops->is_dirty_writeback(page, dirty, writeback);
 }
 
+#ifdef CONFIG_KRG_MM
+#define RPC_MAX_PAGES 1700
+
+static inline int krg_reclaim_stat_index(enum lru_list lru)
+{
+    return is_kddm_lru(lru) ? 2 : is_file_lru(lru);
+}
+
+static void check_injection_flow(void)
+{
+    long limit = RPC_MAX_PAGES;
+
+    if ((rpc_consumed_bytes() / PAGE_SIZE) < limit)
+        return;
+
+    if (current_is_kswapd())
+        limit /= 2;
+    else
+        limit = 4 * limit / 5;
+
+    while ((rpc_consumed_bytes() / PAGE_SIZE) > limit)
+        schedule();
+}
+#endif
+
 /*
  * shrink_page_list() returns the number of reclaimed pages
  */
@@ -828,6 +857,11 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 
 		page = lru_to_page(page_list);
 		list_del(&page->lru);
+
+#ifdef CONFIG_KRG_MM
+		if (PageMigratable(page))
+			check_injection_flow();
+#endif
 
 		if (!trylock_page(page))
 			goto keep;
@@ -955,6 +989,27 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		case PAGEREF_RECLAIM_CLEAN:
 			; /* try to reclaim the page below */
 		}
+
+#ifdef CONFIG_KRG_MM
+        if (PageMigratable(page) && page_mapped(page)) {
+            switch (try_to_flush_page(page)) {
+            case SWAP_FAIL:
+                goto activate_locked;
+            case SWAP_AGAIN:
+                goto keep_locked;
+            case SWAP_MLOCK:
+                goto cull_mlocked;
+            case SWAP_SUCCESS:
+                unlock_page(page);
+                if (put_page_testzero(page))
+                    goto free_it;
+                nr_reclaimed++;
+                continue;
+            default:
+                goto keep_locked;
+            }
+        }
+#endif
 
 		/*
 		 * Anonymous process memory has backing store?
@@ -1437,9 +1492,13 @@ putback_inactive_pages(struct lruvec *lruvec, struct list_head *page_list)
 		add_page_to_lru_list(page, lruvec, lru);
 
 		if (is_active_lru(lru)) {
-			int file = is_file_lru(lru);
+#ifdef CONFIG_KRG_MM
+            int stat_idx = krg_reclaim_stat_index(lru);
+#else
+            int stat_idx = is_file_lru(lru);
+#endif
 			int numpages = hpage_nr_pages(page);
-			reclaim_stat->recent_rotated[file] += numpages;
+			reclaim_stat->recent_rotated[stat_idx] += numpages;
 		}
 		if (put_page_testzero(page)) {
 			__ClearPageLRU(page);
@@ -1493,6 +1552,11 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
 	unsigned long nr_immediate = 0;
 	isolate_mode_t isolate_mode = 0;
 	int file = is_file_lru(lru);
+#ifdef CONFIG_KRG_MM
+    int stat_idx = krg_reclaim_stat_index(lru);
+#else
+    int stat_idx = file;
+#endif
 	struct zone *zone = lruvec_zone(lruvec);
 	struct zone_reclaim_stat *reclaim_stat = &lruvec->reclaim_stat;
 	bool stalled = false;
@@ -1542,7 +1606,7 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
 
 	spin_lock_irq(&zone->lru_lock);
 
-	reclaim_stat->recent_scanned[file] += nr_taken;
+	reclaim_stat->recent_scanned[stat_idx] += nr_taken;
 
 	if (global_reclaim(sc)) {
 		if (current_is_kswapd())
@@ -1705,6 +1769,11 @@ static void shrink_active_list(unsigned long nr_to_scan,
 	unsigned long nr_rotated = 0;
 	isolate_mode_t isolate_mode = 0;
 	int file = is_file_lru(lru);
+#ifdef CONFIG_KRG_MM
+    int stat_idx = krg_reclaim_stat_index(lru);
+#else
+    int stat_idx = file;
+#endif
 	struct zone *zone = lruvec_zone(lruvec);
 
 	lru_add_drain();
@@ -1719,7 +1788,7 @@ static void shrink_active_list(unsigned long nr_to_scan,
 	if (global_reclaim(sc))
 		zone->pages_scanned += nr_scanned;
 
-	reclaim_stat->recent_scanned[file] += nr_taken;
+	reclaim_stat->recent_scanned[stat_idx] += nr_taken;
 
 	__count_zone_vm_events(PGREFILL, zone, nr_scanned);
 	__mod_zone_page_state(zone, NR_LRU_BASE + lru, -nr_taken);
@@ -1776,7 +1845,7 @@ static void shrink_active_list(unsigned long nr_to_scan,
 	 * helps balance scan pressure between file and anonymous pages in
 	 * get_scan_ratio.
 	 */
-	reclaim_stat->recent_rotated[file] += nr_rotated;
+	reclaim_stat->recent_rotated[stat_idx] += nr_rotated;
 
 	move_active_pages_to_lru(lruvec, &l_active, &l_hold, lru);
 	move_active_pages_to_lru(lruvec, &l_inactive, &l_hold, lru - LRU_ACTIVE);
@@ -1855,6 +1924,11 @@ static int inactive_file_is_low(struct lruvec *lruvec)
 
 static int inactive_list_is_low(struct lruvec *lruvec, enum lru_list lru)
 {
+#ifdef CONFIG_KRG_MM
+    if (is_kddm_lru(lru))
+        return get_lru_size(lruvec, LRU_ACTIVE_MIGR) >
+               get_lru_size(lruvec, LRU_INACTIVE_MIGR);
+#endif
 	if (is_file_lru(lru))
 		return inactive_file_is_low(lruvec);
 	else
@@ -1900,14 +1974,27 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 			   unsigned long *nr)
 {
 	struct zone_reclaim_stat *reclaim_stat = &lruvec->reclaim_stat;
+#ifdef CONFIG_KRG_MM
+    u64 fraction[3];
+#else
 	u64 fraction[2];
+#endif
 	u64 denominator = 0;	/* gcc */
 	struct zone *zone = lruvec_zone(lruvec);
 	unsigned long anon_prio, file_prio;
+#ifdef CONFIG_KRG_MM
+    unsigned long migr_prio;
+#endif
 	enum scan_balance scan_balance;
 	unsigned long anon, file;
+#ifdef CONFIG_KRG_MM
+    unsigned long migr;
+#endif
 	bool force_scan = false;
 	unsigned long ap, fp;
+#ifdef CONFIG_KRG_MM
+    unsigned long mp;
+#endif
 	enum lru_list lru;
 
 	/*
@@ -1957,6 +2044,10 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 		get_lru_size(lruvec, LRU_INACTIVE_ANON);
 	file  = get_lru_size(lruvec, LRU_ACTIVE_FILE) +
 		get_lru_size(lruvec, LRU_INACTIVE_FILE);
+#ifdef CONFIG_KRG_MM
+    migr = get_lru_size(lruvec, LRU_ACTIVE_MIGR) +
+        get_lru_size(lruvec, LRU_INACTIVE_MIGR);
+#endif
 
 	/*
 	 * Prevent the reclaimer from falling into the cache trap: as
@@ -1996,6 +2087,9 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 	 */
 	anon_prio = vmscan_swappiness(sc);
 	file_prio = 200 - anon_prio;
+#ifdef CONFIG_KRG_MM
+    migr_prio = 200;
+#endif
 
 	/*
 	 * OK, so we have swap space and a fair amount of page cache
@@ -2018,6 +2112,12 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 		reclaim_stat->recent_scanned[1] /= 2;
 		reclaim_stat->recent_rotated[1] /= 2;
 	}
+#ifdef CONFIG_KRG_MM
+    if (unlikely(reclaim_stat->recent_scanned[2] > migr / 4)) {
+        reclaim_stat->recent_scanned[2] /= 2;
+        reclaim_stat->recent_rotated[2] /= 2;
+    }
+#endif
 
 	/*
 	 * The amount of pressure on anon vs file pages is inversely
@@ -2029,14 +2129,26 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 
 	fp = file_prio * (reclaim_stat->recent_scanned[1] + 1);
 	fp /= reclaim_stat->recent_rotated[1] + 1;
+#ifdef CONFIG_KRG_MM
+    mp = migr_prio * (reclaim_stat->recent_scanned[2] + 1);
+    mp /= reclaim_stat->recent_rotated[2] + 1;
+#endif
 	spin_unlock_irq(&zone->lru_lock);
 
 	fraction[0] = ap;
 	fraction[1] = fp;
+#ifdef CONFIG_KRG_MM
+    fraction[2] = mp;
+    denominator = ap + fp + mp + 1;
+#else
 	denominator = ap + fp + 1;
+#endif
 out:
 	for_each_evictable_lru(lru) {
 		int file = is_file_lru(lru);
+#ifdef CONFIG_KRG_MM
+        int stat_idx = krg_reclaim_stat_index(lru);
+#endif
 		unsigned long size;
 		unsigned long scan;
 
@@ -2046,6 +2158,14 @@ out:
 		if (!scan && force_scan)
 			scan = min(size, SWAP_CLUSTER_MAX);
 
+#ifdef CONFIG_KRG_MM
+        if (is_kddm_lru(lru)) {
+            if (scan_balance == SCAN_FRACT)
+                scan = div64_u64(scan * fraction[stat_idx], denominator);
+            nr[lru] = scan;
+            continue;
+        }
+#endif
 		switch (scan_balance) {
 		case SCAN_EQUAL:
 			/* Scan lists relative to size */
@@ -2106,6 +2226,9 @@ static void shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
 
 	blk_start_plug(&plug);
 	while (nr[LRU_INACTIVE_ANON] || nr[LRU_ACTIVE_FILE] ||
+#ifdef CONFIG_KRG_MM
+           nr[LRU_INACTIVE_MIGR] || nr[LRU_ACTIVE_MIGR] ||
+#endif
 					nr[LRU_INACTIVE_FILE]) {
 		unsigned long nr_anon, nr_file, percentage;
 		unsigned long nr_scanned;
