@@ -1602,7 +1602,7 @@ static int handle_kill_pg_info(struct rpc_desc *desc, void *_msg, size_t size)
 	old_cred = override_creds(cred);
 	success = 0;
 	do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
-		if (!SI_FROMKERNEL(&msg->info)
+		if (!SI_FROMKERNEL(&msg->info) &&
 		    !kill_ok_by_cred(cred, p) &&
 		    (msg->sig != SIGCONT
 			|| msg->session != task_session_nr_ns(p, &init_pid_ns)))
