@@ -199,6 +199,13 @@ void rpc_disable(enum rpcid rpcid){
 		set_bit(rpcid, rpc_mask);
 };
 
+void rpc_disable_all(void)
+{
+	int i;
+
+	for (i = 0; i < RPCID_MAX; i++)
+		rpc_disable(i);
+}
 
 /** Initialisation of the rpc module.
  *  @author Pascal Gallard
@@ -211,6 +218,26 @@ void rpc_undef_handler (struct rpc_desc *desc){
 void rpc_connect(void)
 {
 	comlayer_enable();
+}
+
+void rpc_enable_alldev(void)
+{
+	comlayer_enable();
+}
+
+int rpc_enable_dev(const char *name)
+{
+	return comlayer_enable_dev(name);
+}
+
+void rpc_disable_alldev(void)
+{
+	comlayer_disable();
+}
+
+int rpc_disable_dev(const char *name)
+{
+	return comlayer_disable_dev(name);
 }
 
 int init_rpc(void)
