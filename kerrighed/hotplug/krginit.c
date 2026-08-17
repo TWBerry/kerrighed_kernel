@@ -10,6 +10,9 @@
 #include <kerrighed/version.h>
 #include <kerrighed/types.h>
 #include <kerrighed/krginit.h>
+#ifdef CONFIG_KRG_HOTPLUG
+#include <linux/cluster_barrier.h>
+#endif
 #include <kerrighed/krgflags.h>
 #include <linux/unique_id.h>
 #include <net/krgrpc/rpc.h>
@@ -346,6 +349,8 @@ int init_kerrighed_communication_system(void)
 #endif
 
 #ifdef CONFIG_KRG_HOTPLUG
+	init_cluster_barrier();
+
 	if (init_hotplug())
 		goto err_hotplug;
 #endif

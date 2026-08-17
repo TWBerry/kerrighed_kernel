@@ -19,7 +19,7 @@ lib-y := ctype.o string.o vsprintf.o cmdline.o \
 obj-$(CONFIG_ARCH_HAS_DEBUG_STRICT_USER_COPY_CHECKS) += usercopy.o
 
 ifdef CONFIG_KRGRPC
-lib-y += krg_hashtable.o unique_id.o
+lib-y += krg_hashtable.o unique_id.o cluster_barrier.o
 endif
 
 lib-$(CONFIG_MMU) += ioremap.o
