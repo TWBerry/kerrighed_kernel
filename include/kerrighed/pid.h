@@ -52,6 +52,53 @@ static inline pid_t make_kerrighed_pid_for_node(pid_t pid,
 #define KERRIGHED_PID_MAX_LIMIT \
 	__MAKE_KERRIGHED_PID_FOR_NODE(0, KERRIGHED_MAX_NODES)
 
+/* Kerrighed container PID numbers. */
+static inline pid_t pid_knr(struct pid *pid)
+{
+	struct pid_namespace *ns = ns_of_pid(pid);
+
+	if (ns && ns->krg_ns)
+		return pid_nr_ns(pid, krg_pid_ns_root(ns));
+	return 0;
+}
+
+static inline pid_t task_pid_knr(struct task_struct *task)
+{
+	return pid_knr(task_pid(task));
+}
+
+static inline pid_t task_tgid_knr(struct task_struct *task)
+{
+	return pid_knr(task_tgid(task));
+}
+
+static inline pid_t task_pgrp_knr(struct task_struct *task)
+{
+	return pid_knr(task_pgrp(task));
+}
+
+static inline pid_t task_session_knr(struct task_struct *task)
+{
+	return pid_knr(task_session(task));
+}
+
+static inline struct pid *find_kpid(int nr)
+{
+	struct pid_namespace *ns = find_get_krg_pid_ns();
+	struct pid *pid;
+
+	if (!ns)
+		return NULL;
+	pid = find_pid_ns(nr, ns);
+	put_pid_ns(ns);
+	return pid;
+}
+
+static inline struct task_struct *find_task_by_kpid(pid_t pid)
+{
+	return pid_task(find_kpid(pid), PIDTYPE_PID);
+}
+
 /* PID location */
 #ifdef CONFIG_KRG_EPM
 int krg_set_pid_location(pid_t pid, kerrighed_node_t node);
