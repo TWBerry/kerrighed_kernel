@@ -14,6 +14,10 @@
 #include <linux/syscalls.h>
 #include <linux/err.h>
 #include <linux/acct.h>
+#ifdef CONFIG_KRG_PROC
+#include <linux/module.h>
+#include <kerrighed/namespace.h>
+#endif
 #include <linux/slab.h>
 #include <linux/proc_ns.h>
 #include <linux/reboot.h>
@@ -158,6 +162,10 @@ static void destroy_pid_namespace(struct pid_namespace *ns)
 {
 	int i;
 
+#ifdef CONFIG_KRG_PROC
+	if (ns->krg_ns && krg_pid_ns_root(ns) != ns)
+		put_krg_ns(ns->krg_ns);
+#endif
 	proc_free_inum(ns->proc_inum);
 	for (i = 0; i < PIDMAP_ENTRIES; i++)
 		kfree(ns->pidmap[i].page);
@@ -173,7 +181,23 @@ struct pid_namespace *copy_pid_ns(unsigned long flags,
 		return get_pid_ns(old_ns);
 	if (task_active_pid_ns(current) != old_ns)
 		return ERR_PTR(-EINVAL);
+
+#ifdef CONFIG_KRG_PROC
+	{
+		struct pid_namespace *new_ns;
+
+		new_ns = create_pid_namespace(user_ns, old_ns);
+		if (!IS_ERR(new_ns)) {
+			new_ns->global = old_ns->global || current->create_krg_ns;
+			if (old_ns->krg_ns)
+				get_krg_ns(old_ns->krg_ns);
+			new_ns->krg_ns = old_ns->krg_ns;
+		}
+		return new_ns;
+	}
+#else
 	return create_pid_namespace(user_ns, old_ns);
+#endif
 }
 
 static void free_pid_ns(struct kref *kref)
@@ -196,6 +220,21 @@ void put_pid_ns(struct pid_namespace *ns)
 	}
 }
 EXPORT_SYMBOL_GPL(put_pid_ns);
+
+#ifdef CONFIG_KRG_PROC
+struct pid_namespace *find_get_krg_pid_ns(void)
+{
+	struct krg_namespace *krg_ns = find_get_krg_ns();
+	struct pid_namespace *ns;
+
+	if (!krg_ns)
+		return NULL;
+	ns = get_pid_ns(krg_ns->root_nsproxy.pid_ns);
+	put_krg_ns(krg_ns);
+	return ns;
+}
+EXPORT_SYMBOL(find_get_krg_pid_ns);
+#endif
 
 void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 {

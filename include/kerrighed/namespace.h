@@ -46,6 +46,9 @@ static inline void put_krg_ns(struct krg_namespace *ns)
 
 bool can_create_krg_ns(unsigned long flags);
 
+int krg_set_cluster_creator(void __user *arg);
+int hotplug_namespace_init(void);
+
 /* Restored with the hotplug cluster lifecycle, not namespace core. */
 void krg_ns_root_exit(struct krg_namespace *ns);
 

@@ -87,6 +87,9 @@
 #include <kerrighed/task.h>
 #include <kerrighed/krginit.h>
 #endif
+#ifdef CONFIG_KRG_HOTPLUG
+#include <kerrighed/namespace.h>
+#endif
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -1407,6 +1410,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 					int trace,
 					int node)
 {
+#ifdef CONFIG_KRG_HOTPLUG
+	int saved_create_krg_ns;
+#endif
 	int retval;
 	struct task_struct *p;
 	void *cgrp_ss_priv[CGROUP_CANFORK_COUNT ?
@@ -1455,6 +1461,11 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 			return ERR_PTR(-EINVAL);
 	}
 
+#ifdef CONFIG_KRG_HOTPLUG
+	saved_create_krg_ns = current->create_krg_ns;
+	current->create_krg_ns = can_create_krg_ns(clone_flags);
+#endif
+
 	retval = security_task_create(clone_flags);
 	if (retval)
 		goto fork_out;
@@ -1463,6 +1474,10 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	p = dup_task_struct(current, node);
 	if (!p)
 		goto fork_out;
+
+#ifdef CONFIG_KRG_HOTPLUG
+	p->create_krg_ns = 0;
+#endif
 
 	ftrace_graph_init_task(p);
 
@@ -1826,6 +1841,10 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	trace_task_newtask(p, clone_flags);
 	uprobe_copy_process(p, clone_flags);
 
+#ifdef CONFIG_KRG_HOTPLUG
+	current->create_krg_ns = saved_create_krg_ns;
+#endif
+
 	return p;
 
 #ifdef CONFIG_KRG_PROC
@@ -1892,6 +1911,9 @@ bad_fork_cleanup_count:
 bad_fork_free:
 	delayed_free_task(p);
 fork_out:
+#ifdef CONFIG_KRG_HOTPLUG
+	current->create_krg_ns = saved_create_krg_ns;
+#endif
 	return ERR_PTR(retval);
 }
 
@@ -2191,6 +2213,14 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
 	struct nsproxy *new_nsproxy = NULL;
 	int do_sysvsem = 0;
 	int err;
+#ifdef CONFIG_KRG_HOTPLUG
+	int saved_create_krg_ns;
+#endif
+
+#ifdef CONFIG_KRG_HOTPLUG
+	saved_create_krg_ns = current->create_krg_ns;
+	current->create_krg_ns = 0;
+#endif
 
 	/*
 	 * If unsharing a user namespace must also unshare the thread.
@@ -2288,6 +2318,9 @@ bad_unshare_cleanup_fs:
 		free_fs_struct(new_fs);
 
 bad_unshare_out:
+#ifdef CONFIG_KRG_HOTPLUG
+	current->create_krg_ns = saved_create_krg_ns;
+#endif
 	return err;
 }
 

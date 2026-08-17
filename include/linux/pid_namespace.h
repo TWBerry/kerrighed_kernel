@@ -8,6 +8,9 @@
 #include <linux/threads.h>
 #include <linux/nsproxy.h>
 #include <linux/kref.h>
+#ifdef CONFIG_KRG_PROC
+#include <kerrighed/namespace.h>
+#endif
 
 struct pidmap {
        atomic_t nr_free;
@@ -45,6 +48,10 @@ struct pid_namespace {
 	unsigned int proc_inum;
 	RH_KABI_EXTEND(struct rcu_head rcu)
 	RH_KABI_EXTEND(struct ucounts *ucounts)
+#ifdef CONFIG_KRG_PROC
+	struct krg_namespace *krg_ns;
+	unsigned global:1;
+#endif
 };
 
 extern struct pid_namespace init_pid_ns;
@@ -64,6 +71,21 @@ extern struct pid_namespace *copy_pid_ns(unsigned long flags,
 extern void zap_pid_ns_processes(struct pid_namespace *pid_ns);
 extern int reboot_pid_ns(struct pid_namespace *pid_ns, int cmd);
 extern void put_pid_ns(struct pid_namespace *ns);
+
+#ifdef CONFIG_KRG_PROC
+static inline struct pid_namespace *krg_pid_ns_root(struct pid_namespace *ns)
+{
+	return ns->krg_ns->root_nsproxy.pid_ns;
+}
+
+static inline bool is_krg_pid_ns_root(struct pid_namespace *ns)
+{
+	struct krg_namespace *krg_ns = ns->krg_ns;
+	return krg_ns && ns == krg_ns->root_nsproxy.pid_ns;
+}
+
+struct pid_namespace *find_get_krg_pid_ns(void);
+#endif
 
 #else /* !CONFIG_PID_NS */
 #include <linux/err.h>
@@ -94,6 +116,20 @@ static inline int reboot_pid_ns(struct pid_namespace *pid_ns, int cmd)
 {
 	return 0;
 }
+#ifdef CONFIG_KRG_PROC
+static inline struct pid_namespace *krg_pid_ns_root(struct pid_namespace *ns)
+{
+	return ns;
+}
+static inline bool is_krg_pid_ns_root(struct pid_namespace *ns)
+{
+	return true;
+}
+static inline struct pid_namespace *find_get_krg_pid_ns(void)
+{
+	return &init_pid_ns;
+}
+#endif
 #endif /* CONFIG_PID_NS */
 
 extern struct pid_namespace *task_active_pid_ns(struct task_struct *tsk);

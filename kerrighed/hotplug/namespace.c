@@ -22,6 +22,8 @@
 #include <linux/user_namespace.h>
 #include <net/net_namespace.h>
 #include <kerrighed/namespace.h>
+#include <kerrighed/krg_services.h>
+#include <kerrighed/krg_syscalls.h>
 
 static struct krg_namespace __rcu *krg_ns;
 static DEFINE_SPINLOCK(krg_ns_lock);
@@ -61,6 +63,12 @@ int copy_krg_ns(struct task_struct *task, struct nsproxy *new)
 				ns->root_task = task;
 				init_completion(&ns->root_task_in_exit);
 				init_completion(&ns->root_task_continue_exit);
+
+#ifdef CONFIG_KRG_PROC
+				BUG_ON(ns->root_nsproxy.pid_ns->krg_ns);
+				ns->root_nsproxy.pid_ns->krg_ns = ns;
+				ns->root_nsproxy.pid_ns->global = 1;
+#endif
 
 				rcu_assign_pointer(krg_ns, ns);
 			} else {
@@ -148,3 +156,19 @@ bool can_create_krg_ns(unsigned long flags)
 #endif
 		;
 }
+
+int krg_set_cluster_creator(void __user *arg)
+{
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	current->create_krg_ns = !!arg;
+	return 0;
+}
+
+int hotplug_namespace_init(void)
+{
+	return register_proc_service(KSYS_HOTPLUG_SET_CREATOR,
+				     krg_set_cluster_creator);
+}
+
