@@ -879,6 +879,136 @@ Only after deterministic tests pass should testing expand to:
 - node churn,
 - longer-running stress tests.
 
+## 9.1 KRGRPC completeness audit
+
+The original Linux 3.10 bring-up validated KRGRPC sufficiently for:
+
+- kernel boot,
+- TIPC initialization,
+- two-node discovery,
+- two-node Kerrighed join.
+
+That milestone did not prove full functional equivalence with the original
+Kerrighed KRGRPC implementation.
+
+A later old-tree versus new-tree completeness audit found that the file set in
+`net/krgrpc/` is still present, but substantial behavior had been removed or
+changed inside `rpc.c`, `rpclayer.c`, `comlayer.c` and `synchro.c`.
+
+The audit therefore distinguishes:
+
+- behavior intentionally replaced by the Linux 3.10 global KRGRPC design,
+- original invariants which must be restored,
+- functionality which belongs to higher-level subsystems and must be restored
+  together with those subsystems.
+
+### Restored KRGRPC core semantics
+
+The following behavior has now been restored and targeted-build validated.
+
+#### RPC synchronization
+
+`net/krgrpc/synchro.c` had semantic regressions unrelated to a kernel API
+change.
+
+The original DEAD flag operation:
+
+```c
+flags |= __RPC_SYNCHRO_DEAD;
+```
+
+had become an `&=` operation. Original error handling for allocation,
+radix-tree insertion and missing entries was also changed.
+
+The original synchronization semantics were restored.
+
+Validation:
+
+```text
+net/krgrpc/synchro.o    PASS
+net/krgrpc/             PASS
+```
+
+#### RPC descriptor wait/return semantics
+
+The Linux 3.10 port lost part of the descriptor completion semantics.
+
+`rpc_wait_return()` now checks both pending unexpected data and
+`RPC_FLAGS_CLOSED`, preventing a waiter from sleeping indefinitely after the
+descriptor has already closed.
+
+The non-blocking `rpc_check_return()` behavior was also restored.
+
+Validation:
+
+```text
+net/krgrpc/rpclayer.o   PASS
+net/krgrpc/             PASS
+```
+
+#### TX memory accounting
+
+The original `rpc_consumed_bytes()` accounting was restored around
+`rpc_tx_elem` allocation and final release.
+
+This accounting is required by the original KerMM low-memory integration and
+is retained even before the higher-level memory-pressure path is restored.
+
+#### RX OOM/backpressure
+
+The bootstrap port converted several RX allocation failures into `BUG()`.
+The original Kerrighed behavior instead preserved the packet and retried it
+when memory became available.
+
+The Linux 3.10 global per-node ordering design is retained, but its OOM
+semantics are now restored:
+
+```text
+next ordered packet
+        |
+        +-- processed --> advance receive sequence
+        |
+        `-- -ENOMEM --> keep packet at queue head
+                        do not advance sequence
+                        retry later
+```
+
+Validation:
+
+```text
+net/krgrpc/comlayer.o   PASS
+net/krgrpc/             PASS
+```
+
+#### Network-device lifecycle
+
+Per-device and all-device KRGRPC bearer enable/disable entry points were
+restored for later hotplug integration.
+
+The old `rpc_disable_all()` excluded `RPC_CONNECT` and `RPC_CLOSE`. Those RPC
+IDs belonged to the removed per-communicator connection handshake and do not
+exist in the current global KRGRPC design, so the Linux 3.10 implementation
+disables the currently defined RPC service IDs instead of recreating obsolete
+control IDs.
+
+Targeted `rpc.o`, `comlayer.o` and full `net/krgrpc/` builds pass.
+
+### KRGRPC work still pending
+
+KRGRPC is not yet marked complete.
+
+The following areas remain intentionally deferred until their owning
+subsystem is audited:
+
+- connection and connect/close-mask lifecycle: restore with hotplug/namespace,
+- low-memory mode: restore with KerMM injection,
+- RPC cancellation and forwarding: restore with EPM,
+- node removal and failure recovery: audit with hotplug and KDDM teardown.
+
+The original `rpc_communicator` and per-connection architecture must not be
+restored mechanically. The Linux 3.10 port uses a global communication model,
+so each missing original invariant must be mapped onto that design.
+
 ## 10. Future kernel port checklist
 
 At minimum, audit all of the following for every target kernel:
