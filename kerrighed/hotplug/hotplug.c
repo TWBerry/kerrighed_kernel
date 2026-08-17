@@ -8,6 +8,9 @@
 #include <linux/completion.h>
 #include <linux/slab.h>
 #include <linux/rcupdate.h>
+#include <linux/notifier.h>
+#include <linux/cluster_barrier.h>
+#include <linux/err.h>
 
 #include <kerrighed/hotplug.h>
 #include <kerrighed/namespace.h>
@@ -38,6 +41,7 @@ static DEFINE_MUTEX(global_hotplug_req_list_mutex);
 
 static kerrighed_node_t hotplug_coordinator;
 static DEFINE_MUTEX(hotplug_coordinator_mutex);
+static struct cluster_barrier *hotplug_coordinator_barrier;
 
 struct hotplug_context *hotplug_ctx_alloc(struct krg_namespace *ns)
 {
@@ -310,6 +314,200 @@ unlock:
 	}
 }
 
+
+static void handle_hotplug_coordinator_move(struct rpc_desc *desc)
+{
+    struct hotplug_request *req, tmp, *safe;
+    int err;
+
+    /*
+     * No list lock is needed here: cluster reconfiguration holds the
+     * coordinator mutex on every participating node, so no request can
+     * start or finish while ownership is transferred.
+     */
+    BUG_ON(!list_empty(&global_hotplug_req_list));
+
+    for (;;) {
+        err = rpc_unpack_type(desc, tmp);
+        if (err)
+            goto cancel;
+        if (tmp.node == KERRIGHED_NODE_ID_NONE)
+            break;
+
+        req = kmalloc(sizeof(*req), GFP_KERNEL);
+        if (!req) {
+            err = -ENOMEM;
+            goto error;
+        }
+        *req = tmp;
+        list_add_tail(&req->list, &global_hotplug_req_list);
+    }
+
+    if (rpc_pack_type(desc, err))
+        goto cancel;
+    return;
+
+cancel:
+    rpc_cancel(desc);
+    if (err > 0)
+        err = -EPIPE;
+error:
+    list_for_each_entry_safe(req, safe, &global_hotplug_req_list, list) {
+        list_del(&req->list);
+        kfree(req);
+    }
+}
+
+static int hotplug_coordinator_move(kerrighed_node_t target)
+{
+    struct rpc_desc *desc;
+    struct hotplug_request *req, *tmp;
+    struct hotplug_request null_req;
+    int err, ret;
+
+    desc = rpc_begin(HOTPLUG_COORDINATOR_MOVE, target);
+    if (!desc)
+        return -ENOMEM;
+
+    /*
+     * The cluster barrier and coordinator mutex freeze start/finish while
+     * the pending global request list is transferred to the new owner.
+     */
+    list_for_each_entry(req, &global_hotplug_req_list, list) {
+        err = rpc_pack_type(desc, *req);
+        if (err)
+            goto cancel;
+    }
+
+    null_req = (struct hotplug_request) {
+        .node = KERRIGHED_NODE_ID_NONE,
+    };
+    err = rpc_pack_type(desc, null_req);
+    if (err)
+        goto cancel;
+
+    err = rpc_unpack_type(desc, ret);
+    if (err) {
+        if (err > 0)
+            err = -EPIPE;
+    } else {
+        err = ret;
+    }
+    if (err)
+        goto out;
+
+    list_for_each_entry_safe(req, tmp, &global_hotplug_req_list, list) {
+        list_del(&req->list);
+        kfree(req);
+    }
+
+out:
+    rpc_end(desc, 0);
+    return err;
+
+cancel:
+    rpc_cancel(desc);
+    goto out;
+}
+
+static int hotplug_coordinator_reconfigure(struct hotplug_context *ctx,
+                                           const krgnodemask_t *new_map,
+                                           const krgnodemask_t *full_map)
+{
+    kerrighed_node_t new_coordinator;
+    int err;
+
+    new_coordinator = __first_krgnode(new_map);
+
+    mutex_lock(&hotplug_coordinator_mutex);
+
+    err = cluster_barrier(hotplug_coordinator_barrier,
+                          full_map, new_coordinator);
+    if (err)
+        goto unlock;
+
+    if (hotplug_coordinator == kerrighed_node_id &&
+        hotplug_coordinator != new_coordinator) {
+        err = hotplug_coordinator_move(new_coordinator);
+        if (err) {
+            printk(KERN_ERR
+                   "kerrighed: Failed to move hotplug coordinator! "
+                   "Cluster reconfiguration hung!\n");
+            goto unlock;
+        }
+    }
+
+    hotplug_coordinator = new_coordinator;
+
+    err = cluster_barrier(hotplug_coordinator_barrier,
+                          full_map, new_coordinator);
+unlock:
+    mutex_unlock(&hotplug_coordinator_mutex);
+    return err;
+}
+
+static int hotplug_coordinator_add(struct hotplug_context *ctx)
+{
+    krgnodemask_t new_map;
+
+    rpc_enable(HOTPLUG_COORDINATOR_MOVE);
+
+    krgnodes_or(new_map, krgnode_online_map, ctx->node_set.v);
+    return hotplug_coordinator_reconfigure(ctx, &new_map, &new_map);
+}
+
+static int hotplug_coordinator_remove_local(struct hotplug_context *ctx)
+{
+    krgnodemask_t old_map;
+
+    hotplug_cancel_all_requests();
+
+    if (!num_online_krgnodes())
+        return 0;
+
+    krgnodes_or(old_map, krgnode_online_map, ctx->node_set.v);
+    return hotplug_coordinator_reconfigure(ctx,
+                                           &krgnode_online_map,
+                                           &old_map);
+}
+
+static int hotplug_coordinator_remove_advert(struct hotplug_context *ctx)
+{
+    krgnodemask_t old_map;
+
+    krgnodes_or(old_map, krgnode_online_map, ctx->node_set.v);
+    return hotplug_coordinator_reconfigure(ctx,
+                                           &krgnode_online_map,
+                                           &old_map);
+}
+
+static int hotplug_coordinator_notifier(struct notifier_block *nb,
+                                        hotplug_event_t event,
+                                        void *data)
+{
+    struct hotplug_context *ctx = data;
+    int err;
+
+    switch (event) {
+    case HOTPLUG_NOTIFY_ADD:
+        err = hotplug_coordinator_add(ctx);
+        break;
+    case HOTPLUG_NOTIFY_REMOVE_LOCAL:
+        err = hotplug_coordinator_remove_local(ctx);
+        break;
+    case HOTPLUG_NOTIFY_REMOVE_ADVERT:
+        err = hotplug_coordinator_remove_advert(ctx);
+        break;
+    default:
+        err = 0;
+        break;
+    }
+
+    if (err)
+        return notifier_from_errno(err);
+    return NOTIFY_OK;
+}
+
 int init_hotplug(void)
 {
 	krg_ha_wq = create_workqueue("krgHA");
@@ -318,6 +516,11 @@ int init_hotplug(void)
 	krg_hotplug_wq = create_singlethread_workqueue("krg_hotplug");
 	if (!krg_hotplug_wq)
 		panic("kerrighed: Couldn't create hotplug workqueue!\n");
+
+	hotplug_coordinator_barrier =
+		alloc_cluster_barrier(HOTPLUG_COORDINATOR_BARRIER);
+	if (IS_ERR(hotplug_coordinator_barrier))
+		panic("kerrighed: Couldn't create hotplug coordinator barrier!\n");
 
 	hotplug_hooks_init();
 
@@ -333,6 +536,11 @@ int init_hotplug(void)
 	rpc_register_int(HOTPLUG_START_REQ, handle_hotplug_start_req, 0);
 	rpc_register_int(HOTPLUG_FINISH_REQ, handle_hotplug_finish_req, 0);
 	rpc_register_void(HOTPLUG_RUN_REQ, handle_hotplug_run_req, 0);
+	rpc_register(HOTPLUG_COORDINATOR_MOVE,
+		     handle_hotplug_coordinator_move, 0);
+
+	register_hotplug_notifier(hotplug_coordinator_notifier,
+				  HOTPLUG_PRIO_HOTPLUG_COORDINATOR);
 
 	return 0;
 };
