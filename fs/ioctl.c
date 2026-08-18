@@ -648,7 +648,8 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 #ifdef CONFIG_KRG_FAF
 	if (f.file->f_flags & O_FAF_CLT) {
 		error = krg_faf_ioctl(f.file, cmd, arg);
-		goto out_fput;
+		fdput(f);
+		return error;
 	}
 #endif
 

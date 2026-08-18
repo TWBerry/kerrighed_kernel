@@ -3238,7 +3238,7 @@ finish_lookup:
 	audit_inode(name, nd->path.dentry, 0);
 finish_open:
 #ifdef CONFIG_KRG_FAF
-	if ((!nd.path.dentry) && (nd.path.mnt)) {
+	if ((!nd->path.dentry) && (nd->path.mnt)) {
 		error = 0;
 		goto out;
 	}
@@ -3446,8 +3446,8 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		put_link(nd, &link, cookie);
 	}
 #ifdef CONFIG_KRG_FAF
-	if ((!nd.path.dentry) && (nd.path.mnt)) {
-		struct file *file = (struct file *)nd.path.mnt;
+	if ((!nd->path.dentry) && (nd->path.mnt)) {
+		struct file *file = (struct file *)nd->path.mnt;
 		get_file(file);
 		return file;
 	}

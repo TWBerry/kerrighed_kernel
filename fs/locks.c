@@ -1900,8 +1900,8 @@ SYSCALL_DEFINE2(flock, unsigned int, fd, unsigned int, cmd)
 		goto out;
 
 #ifdef CONFIG_KRG_FAF
-	if (filp->f_flags & O_FAF_CLT) {
-		error = krg_faf_flock(filp, cmd);
+	if (f.file->f_flags & O_FAF_CLT) {
+		error = krg_faf_flock(f.file, cmd);
 		goto out_putf;
 	}
 #endif

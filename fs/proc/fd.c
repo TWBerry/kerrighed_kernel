@@ -49,7 +49,7 @@ static int seq_show(struct seq_file *m, void *v)
 
 #ifdef CONFIG_KRG_FAF
 			f_flags =
-				(unsigned int)(file->f_flags & ~(unsigned long)O_KRG_FLAGS));
+				(unsigned int)(file->f_flags & ~(unsigned long)O_KRG_FLAGS);
 #else
 			f_flags = file->f_flags;
 #endif
