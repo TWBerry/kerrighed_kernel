@@ -1009,6 +1009,396 @@ The original `rpc_communicator` and per-connection architecture must not be
 restored mechanically. The Linux 3.10 port uses a global communication model,
 so each missing original invariant must be mapped onto that design.
 
+<!-- KERRIGHED-COMPLETENESS-RESTORE-2026-BEGIN -->
+
+## 9.2 Completeness restoration after the initial Linux 3.10 bring-up
+
+The first Linux 3.10 port reached important compile and runtime milestones, but
+later old-tree versus new-tree audits showed that those milestones did not imply
+full functional equivalence with the original Kerrighed tree.
+
+The current porting rule is therefore:
+
+> A subsystem is not complete merely because it builds, links, boots, or passes
+> a basic two-node test. Every subsystem previously considered ported must be
+> compared against the original tree for missing files, functions, kernel hooks,
+> lifecycle transitions, and semantic invariants.
+
+Each difference is classified as one of:
+
+- **PORTED** - original behavior is preserved on the target kernel API.
+- **REDESIGNED** - behavior is preserved through an intentional target-kernel
+  architecture change.
+- **INCOMPLETE** - original Kerrighed functionality is missing.
+- **DEFERRED** - the missing behavior belongs to another subsystem which must
+  be restored first.
+
+This completeness audit is required before progressing to higher-level
+subsystems such as EPM and the distributed scheduler.
+
+### 9.2.1 Build validation strategy
+
+Small changes are validated with a targeted object build first:
+
+```sh
+make -j4 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- \
+  KCFLAGS="-fdiagnostics-color=always" \
+  path/to/object.o \
+  2>&1 | tee build-<subsystem>-<task>.log
+```
+
+A restored subsystem is then built as a directory target:
+
+```sh
+make -j4 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- \
+  KCFLAGS="-fdiagnostics-color=always" \
+  kerrighed/mm/ \
+  2>&1 | tee build-kermm-subsystem-check.log
+```
+
+Full integration sweeps use `-k` so independent failures can be grouped by
+their common root cause:
+
+```sh
+make -k -j4 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- bzImage \
+  KCFLAGS="-fdiagnostics-color=always" \
+  2>&1 | tee build-port-completeness-error-sweep.log
+```
+
+Build logs are named after the subsystem or porting task so that historical
+results remain attributable.
+
+### 9.2.2 Effective-current execution-context restoration
+
+The original Kerrighed EPM model redirects `current` through
+`task_struct::effective_current`. The initial Linux 3.10 port retained only part
+of this mechanism.
+
+The original model relies on `krg_current` being an assignable lvalue:
+
+```c
+#define krg_current (get_current()->effective_current)
+```
+
+while code which may schedule temporarily exposes the physical worker task:
+
+```c
+#define krg_current_save(tmp) do { \
+        (tmp) = krg_current;        \
+        krg_current = NULL;         \
+} while (0)
+
+#define krg_current_restore(tmp) do { \
+        krg_current = (tmp);          \
+} while (0)
+```
+
+On the target kernel, `current.h` may be parsed before `struct task_struct` is
+complete. Direct dereference from that header therefore cannot be retained.
+The port uses accessors while preserving `krg_current` as an lvalue:
+
+```c
+struct task_struct *krg_get_current(void);
+struct task_struct **krg_current_ptr(void);
+
+#define krg_current (*krg_current_ptr())
+#define current krg_get_current()
+```
+
+The original save/restore boundaries were restored around scheduler and MM
+sleep paths, with additional protection around Linux 3.10
+`sched_submit_work()`.
+
+This is only the execution-context foundation. Full EPM process
+reconstruction, migration, remote clone, signal/sighand state and children
+tracking remain separate EPM completeness work.
+
+### 9.2.3 KRGRPC completeness restoration
+
+The initial communication milestone proved TIPC discovery and two-node join,
+not full KRGRPC equivalence.
+
+The audit restored several independent core invariants.
+
+#### Synchronization DEAD flag
+
+A bootstrap regression changed:
+
+```c
+flags |= __RPC_SYNCHRO_DEAD;
+```
+
+into an `&=` operation, changing the state-machine semantics. The original
+set-bit behavior and error handling were restored.
+
+#### Descriptor completion
+
+`rpc_wait_return()` must stop waiting when a descriptor is closed, not only
+when unexpected data exists. The non-blocking `rpc_check_return()` behavior was
+also restored.
+
+#### TX memory accounting
+
+The original RPC payload accounting was restored:
+
+```c
+consumed_bytes_add(size);
+...
+consumed_bytes_sub(elem->iov[1].iov_len);
+```
+
+This later became a dependency of KerMM low-memory flow control.
+
+#### Ordered RX OOM handling
+
+The bootstrap port converted receive allocation failures into `BUG()`. The
+restored model keeps the expected packet at the head of the per-node ordering
+queue and retries it later without advancing the receive sequence:
+
+```text
+packet N
+   |
+   +-- success  -> advance sequence -> process N+1
+   |
+   `-- -ENOMEM -> keep N queued
+                  do not advance sequence
+                  retry later
+```
+
+The current global per-node ordering design is retained; the old
+`rpc_communicator` object is not restored mechanically.
+
+#### Low-memory flow control
+
+The original per-connection low-memory throttling was adapted to the global
+KRGRPC model by maintaining receive thresholds per remote node.
+
+### 9.2.4 Hotplug and Kerrighed namespace restoration
+
+The initial two-node autostart path had removed most of the original Kerrighed
+namespace and hotplug orchestration.
+
+The completeness audit restored:
+
+- `struct krg_namespace` lifetime and reference counting,
+- `nsproxy->krg_ns`,
+- cluster PID namespace linkage,
+- `task_struct::create_krg_ns`,
+- namespace creation across fork/unshare,
+- cluster creator service,
+- cluster barrier infrastructure,
+- hotplug request context and serialized start/run/finish requests,
+- hotplug coordinator ownership transfer,
+- cluster container helper lifecycle,
+- HOTPLUG_READY container handshake.
+
+The old namespace contained a per-namespace `rpc_communicator`. That field was
+not restored because the Linux 3.10 port intentionally uses a global KRGRPC
+communication domain.
+
+Example transport adaptation:
+
+```c
+/* Original Kerrighed */
+rpc_begin(HOTPLUG_START_REQ, ctx->ns->rpc_comm, coordinator);
+
+/* Linux 3.10 port */
+rpc_begin(HOTPLUG_START_REQ, coordinator);
+```
+
+### 9.2.5 Hotplug notifier priority invariant
+
+The old-tree audit found that notifier priorities in the bootstrap port were
+numerically reversed while Linux notifier chains still execute higher
+priorities first.
+
+The relative ordering was restored before reconnecting KerMM:
+
+```text
+MEMBERSHIP_PRESENT
+RPC
+BARRIER
+KDDM
+PROCFS
+MM
+EPM
+HOTPLUG_COORDINATOR
+MEMBERSHIP_ONLINE
+MEMBERSHIP_POSSIBLE
+```
+
+### 9.2.6 KDDM set-wide flush restoration
+
+KerMM hotplug exposed another missing KDDM primitive:
+`_kddm_flush_set()` / `kddm_flush_set()`.
+
+The original implementation relied on a safe iterator ABI which no longer
+matches the target tree. The port preserves its semantics using a two-phase
+operation:
+
+```text
+walk KDDM set under current iterator locking
+        |
+        v
+snapshot object IDs
+        |
+        v
+release iterator/table locks
+        |
+        v
+flush each object with normal path/object locking
+```
+
+### 9.2.7 KerMM completeness restoration
+
+The original KerMM bring-up proved initialization and two-node join, but the
+old-tree audit found several entire missing layers.
+
+#### Mobility and x86 LDT
+
+Linux 3.10 stores the LDT in a container structure:
+
+```c
+struct ldt_struct {
+        struct desc_struct *entries;
+        unsigned int size;
+};
+```
+
+The port serializes the actual descriptor entries:
+
+```c
+ghost_write(ghost, ldt->entries,
+            ldt->size * LDT_ENTRY_SIZE);
+```
+
+#### KerMM hotplug lifecycle
+
+Anonymous-memory KDDM sets again keep their original PID/TGID placement hints:
+
+```c
+private.last_pid = task_pid_knr(tsk);
+private.last_tgid = task_tgid_knr(tsk);
+```
+
+#### Migratable-page LRU model
+
+The original dedicated migratable page model was restored:
+
+```text
+PG_migratable
+LRU_INACTIVE_MIGR
+LRU_ACTIVE_MIGR
+NR_INACTIVE_MIGR
+NR_ACTIVE_MIGR
+```
+
+#### Memory injection and reclaim
+
+For fork/shared anonymous pages, reclaim preserves the relationship between the
+remaining virtual mapping and its KDDM object:
+
+```text
+VMA
+ -> vma->vm_mm
+ -> mm->anon_vma_kddm_set
+ -> virtual address >> PAGE_SHIFT
+ -> KDDM object ID
+```
+
+Only then is `_kddm_flush_object()` invoked.
+
+#### Zone low-watermark API
+
+```c
+/* Original */
+low_mem_limit += zone->pages_low;
+
+/* Target kernel */
+low_mem_limit += low_wmark_pages(zone);
+```
+
+#### Tasklet API
+
+```c
+#include <linux/interrupt.h>
+```
+
+is used instead of the obsolete standalone `linux/tasklet.h`.
+
+### 9.2.8 Distributed VMA mutation propagation
+
+A second KerMM completeness audit found that the bootstrap port propagated
+`munmap` but had lost distributed updates for:
+
+- `mmap`,
+- `mremap`,
+- `brk`,
+- stack expansion,
+- `mprotect`.
+
+Remote application borrows the distributed `mm` with `use_mm()` /
+`unuse_mm()` and reuses the target kernel's own MM operations.
+
+A task-local guard prevents remotely applied mutations from generating another
+RPC notification:
+
+```c
+current->krg_mm_remote_apply = 1;
+use_mm(mm);
+
+/* Apply current Linux MM operation. */
+
+unuse_mm(mm);
+current->krg_mm_remote_apply = 0;
+```
+
+The existing `kh_do_mmap` callback remains a local KerMM linker hook and is
+kept separate from distributed mmap notification so that operations such as
+`brk` do not accidentally emit two mutation RPCs.
+
+### 9.2.9 Remaining KerMM audit debt
+
+KerMM must not yet be labelled fully complete.
+
+Remaining areas identified by the second completeness audit include:
+
+- memcg accounting for the dedicated migratable LRU classes,
+- `/proc/meminfo` visibility for active/inactive migratable pages,
+- OCFS2 `vm_ops` mobility/export integration,
+- runtime validation of distributed VMA mutation propagation,
+- runtime memory-pressure/injection tests,
+- node-removal memory relocation,
+- EPM-owned checkpoint/restart MM paths.
+
+### 9.2.10 Current subsystem status
+
+At this checkpoint:
+
+```text
+KRGRPC core semantics                 restored / targeted-build validated
+Kerrighed namespace core             restored / targeted-build validated
+cluster barrier                       restored / targeted-build validated
+hotplug request engine               restored / targeted-build validated
+hotplug coordinator                  restored / targeted-build validated
+cluster container core/start         restored / targeted-build validated
+KDDM set-wide flush                  restored / targeted-build validated
+KerMM mobility/LDT                   restored / targeted-build validated
+KerMM hotplug                        restored / targeted-build validated
+KerMM migratable LRU                 restored / targeted-build validated
+KerMM injection/reclaim              restored / targeted-build validated
+KerMM VMA mutation propagation       targeted-build validated
+
+full bzImage                          integration sweep in progress
+EPM process reconstruction           incomplete
+distributed scheduler               incomplete
+```
+
+Targeted build validation is not runtime validation and is not subsystem
+completeness by itself.
+
+<!-- KERRIGHED-COMPLETENESS-RESTORE-2026-END -->
+
 ## 10. Future kernel port checklist
 
 At minimum, audit all of the following for every target kernel:
