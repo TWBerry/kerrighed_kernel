@@ -8,16 +8,23 @@
 #include <kerrighed/krgnodemask.h>
 
 enum {
-	HOTPLUG_PRIO_MEMBERSHIP_PRESENT,
-	HOTPLUG_PRIO_RPC,
-	HOTPLUG_PRIO_BARRIER,
-	HOTPLUG_PRIO_KDDM,
+	/*
+	 * raw notifier chains execute higher numeric priorities first.
+	 * Keep the original Kerrighed add-order semantics; the remove
+	 * chain is registered with HOTPLUG_PRIO_MAX - priority and is
+	 * therefore traversed in the reverse order.
+	 */
+	HOTPLUG_PRIO_MEMBERSHIP_POSSIBLE,
 	HOTPLUG_PRIO_MEMBERSHIP_ONLINE,
 	HOTPLUG_PRIO_HOTPLUG_COORDINATOR,
-	HOTPLUG_PRIO_PROCFS,
 	HOTPLUG_PRIO_EPM,
-	HOTPLUG_PRIO_MEMBERSHIP_POSSIBLE, // should be done after distributed services management
-	HOTPLUG_PRIO_MAX // must be the last one
+	HOTPLUG_PRIO_MM,
+	HOTPLUG_PRIO_PROCFS,
+	HOTPLUG_PRIO_KDDM,
+	HOTPLUG_PRIO_BARRIER,
+	HOTPLUG_PRIO_RPC,
+	HOTPLUG_PRIO_MEMBERSHIP_PRESENT,
+	HOTPLUG_PRIO_MAX /* must be the last one */
 };
 
 typedef enum {
