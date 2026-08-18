@@ -796,7 +796,7 @@ static inline bool si_fromuser(const struct siginfo *info)
  * called with RCU read lock from check_kill_permission()
  */
 #ifdef CONFIG_KRG_PROC
-static int kill_ok_by_cred(struct cred *cred, struct task_struct *t)
+static int kill_ok_by_cred(const struct cred *cred, struct task_struct *t)
 {
 #else
 static int kill_ok_by_cred(struct task_struct *t)
@@ -1423,7 +1423,7 @@ static int handle_kill_proc_info(struct rpc_desc *desc, void *_msg, size_t size)
 	struct kill_info_msg msg;
 	struct task_struct *p;
 	struct cred *tmp_cred;
-	const struct cred *old_cred, *cred, *tcred;
+	const struct cred *old_cred, *cred;
 	int retval;
 
 	retval = krg_handle_remote_syscall_begin(desc, _msg, size,
@@ -1573,11 +1573,10 @@ static int handle_kill_pg_info(struct rpc_desc *desc, void *_msg, size_t size)
 {
 	struct kill_info_msg *msg = _msg;
 	struct cred *cred;
-	const struct cred *old_cred, *tcred;
+	const struct cred *old_cred;
 	struct pid *pgrp;
 	struct task_struct *p;
 	int retval, err, success;
-	int cap_kill;
 
 	cred = prepare_creds();
 	if (!cred)
@@ -1588,7 +1587,7 @@ static int handle_kill_pg_info(struct rpc_desc *desc, void *_msg, size_t size)
 		goto err_cancel;
 	}
 
-	read_lock(&tasklist_lock);
+	qread_lock(&tasklist_lock);
 
 	retval = -ESRCH;
 	pgrp = find_pid_ns(msg->pid, &init_pid_ns);
@@ -1614,7 +1613,7 @@ static int handle_kill_pg_info(struct rpc_desc *desc, void *_msg, size_t size)
 	} while_each_pid_task(pgrp, PIDTYPE_PGID, p);
 	retval = success ? 0 : retval;
 
-	read_unlock(&tasklist_lock);
+	qread_unlock(&tasklist_lock);
 
 	revert_creds(old_cred);
 	put_cred(cred);
@@ -1707,7 +1706,7 @@ static int kill_something_info(int sig, struct siginfo *info, pid_t pid)
 		ret = __kill_pgrp_info(sig, info,
 				pid ? find_vpid(-pid) : task_pgrp(current));
 #ifdef CONFIG_KRG_PROC
-		read_unlock(&tasklist_lock);
+		qread_unlock(&tasklist_lock);
 		if (pid)
 			ret = krg_kill_pg_info(sig, info, -pid) ? ret : 0;
 		return ret;
@@ -1726,7 +1725,7 @@ static int kill_something_info(int sig, struct siginfo *info, pid_t pid)
 			}
 		}
 #ifdef CONFIG_KRG_PROC
-		read_unlock(&tasklist_lock);
+		qread_unlock(&tasklist_lock);
 		krg_kill_all(sig, info, &count, &retval);
 #endif /* CONFIG_KRG_PROC */
 		ret = count ? retval : -ESRCH;

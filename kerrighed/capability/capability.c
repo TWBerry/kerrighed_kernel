@@ -157,9 +157,9 @@ static int krg_set_father_cap(struct task_struct *tsk,
 {
 	int retval = 0;
 
-	read_lock(&tasklist_lock);
+	qread_lock(&tasklist_lock);
 		retval = krg_set_cap(tsk->parent, requested_cap);
-		read_unlock(&tasklist_lock);
+		qread_unlock(&tasklist_lock);
 
 	return retval;
 }
@@ -239,9 +239,9 @@ static int krg_get_father_cap(struct task_struct *son,
 {
 	int retval = 0;
 
-	read_lock(&tasklist_lock);
+	qread_lock(&tasklist_lock);
 		retval = krg_get_cap(son->parent, resulting_cap);
-		read_unlock(&tasklist_lock);
+		qread_unlock(&tasklist_lock);
 
 	return retval;
 }

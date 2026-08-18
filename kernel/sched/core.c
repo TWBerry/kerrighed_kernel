@@ -5359,7 +5359,7 @@ SYSCALL_DEFINE2(sched_getparam, pid_t, pid, struct sched_param __user *, param)
 	p = find_process_by_pid(pid);
 #ifdef CONFIG_KRG_PROC
 	if (!p) {
-		read_unlock(&tasklist_lock);
+		rcu_read_unlock();
 		retval = krg_sched_getparam(pid, &lp);
 		if (retval)
 			goto out_nounlock;
