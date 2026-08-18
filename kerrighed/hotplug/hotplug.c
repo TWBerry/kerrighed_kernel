@@ -410,8 +410,7 @@ cancel:
     goto out;
 }
 
-static int hotplug_coordinator_reconfigure(struct hotplug_context *ctx,
-                                           const krgnodemask_t *new_map,
+static int hotplug_coordinator_reconfigure(const krgnodemask_t *new_map,
                                            const krgnodemask_t *full_map)
 {
     kerrighed_node_t new_coordinator;
@@ -446,17 +445,17 @@ unlock:
     return err;
 }
 
-static int hotplug_coordinator_add(struct hotplug_context *ctx)
+static int hotplug_coordinator_add(struct hotplug_node_set *node_set)
 {
     krgnodemask_t new_map;
 
     rpc_enable(HOTPLUG_COORDINATOR_MOVE);
 
-    krgnodes_or(new_map, krgnode_online_map, ctx->node_set.v);
-    return hotplug_coordinator_reconfigure(ctx, &new_map, &new_map);
+    krgnodes_or(new_map, krgnode_online_map, node_set->v);
+    return hotplug_coordinator_reconfigure(&new_map, &new_map);
 }
 
-static int hotplug_coordinator_remove_local(struct hotplug_context *ctx)
+static int hotplug_coordinator_remove_local(struct hotplug_node_set *node_set)
 {
     krgnodemask_t old_map;
 
@@ -465,19 +464,17 @@ static int hotplug_coordinator_remove_local(struct hotplug_context *ctx)
     if (!num_online_krgnodes())
         return 0;
 
-    krgnodes_or(old_map, krgnode_online_map, ctx->node_set.v);
-    return hotplug_coordinator_reconfigure(ctx,
-                                           &krgnode_online_map,
+    krgnodes_or(old_map, krgnode_online_map, node_set->v);
+    return hotplug_coordinator_reconfigure(&krgnode_online_map,
                                            &old_map);
 }
 
-static int hotplug_coordinator_remove_advert(struct hotplug_context *ctx)
+static int hotplug_coordinator_remove_advert(struct hotplug_node_set *node_set)
 {
     krgnodemask_t old_map;
 
-    krgnodes_or(old_map, krgnode_online_map, ctx->node_set.v);
-    return hotplug_coordinator_reconfigure(ctx,
-                                           &krgnode_online_map,
+    krgnodes_or(old_map, krgnode_online_map, node_set->v);
+    return hotplug_coordinator_reconfigure(&krgnode_online_map,
                                            &old_map);
 }
 
@@ -485,18 +482,17 @@ static int hotplug_coordinator_notifier(struct notifier_block *nb,
                                         hotplug_event_t event,
                                         void *data)
 {
-    struct hotplug_context *ctx = data;
     int err;
 
     switch (event) {
     case HOTPLUG_NOTIFY_ADD:
-        err = hotplug_coordinator_add(ctx);
+        err = hotplug_coordinator_add(data);
         break;
     case HOTPLUG_NOTIFY_REMOVE_LOCAL:
-        err = hotplug_coordinator_remove_local(ctx);
+        err = hotplug_coordinator_remove_local(data);
         break;
     case HOTPLUG_NOTIFY_REMOVE_ADVERT:
-        err = hotplug_coordinator_remove_advert(ctx);
+        err = hotplug_coordinator_remove_advert(data);
         break;
     default:
         err = 0;
