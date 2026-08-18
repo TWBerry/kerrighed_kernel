@@ -100,9 +100,16 @@ extern void (*kh_zap_pte)(struct mm_struct *mm, unsigned long addr,
 			  pte_t *pte);
 
 extern void (*kh_do_mmap)(struct vm_area_struct *vma);
+extern void (*kh_notify_mmap)(struct vm_area_struct *vma);
 
 extern void (*kh_do_munmap)(struct mm_struct *, unsigned long, size_t,
 			    struct vm_area_struct *);
+extern void (*kh_do_mremap)(struct mm_struct *, unsigned long, unsigned long,
+			     unsigned long, unsigned long, unsigned long, unsigned long);
+extern void (*kh_do_brk)(struct mm_struct *, unsigned long);
+extern void (*kh_expand_stack)(struct vm_area_struct *, unsigned long);
+extern void (*kh_do_mprotect)(struct mm_struct *, unsigned long, size_t,
+			      unsigned long);
 
 #define TestClearPageLRU(page)  test_and_clear_bit(PG_lru, &(page)->flags)
 

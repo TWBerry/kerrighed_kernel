@@ -401,6 +401,11 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
 		unsigned long prot, int pkey)
 {
 	unsigned long nstart, end, tmp, reqprot;
+#ifdef CONFIG_KRG_MM
+	unsigned long krg_start = start;
+	size_t krg_len = len;
+	unsigned long krg_prot = prot;
+#endif
 	struct vm_area_struct *vma, *prev;
 	int error = -EINVAL;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
@@ -513,6 +518,11 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
 		prot = reqprot;
 	}
 out:
+#ifdef CONFIG_KRG_MM
+	if (!error && kh_do_mprotect && current->mm->anon_vma_kddm_set &&
+	    !current->krg_mm_remote_apply)
+		kh_do_mprotect(current->mm, krg_start, krg_len, krg_prot);
+#endif
 	up_write(&current->mm->mmap_sem);
 	return error;
 }

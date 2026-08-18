@@ -31,9 +31,16 @@ void (*kh_zap_pte)(struct mm_struct *mm, unsigned long addr,
 		   pte_t *pte) = NULL;
 
 void (*kh_do_mmap)(struct vm_area_struct *vma) = NULL;
+void (*kh_notify_mmap)(struct vm_area_struct *vma) = NULL;
 
 void (*kh_do_munmap)(struct mm_struct *, unsigned long, size_t,
 		     struct vm_area_struct *) = NULL;
+void (*kh_do_mremap)(struct mm_struct *, unsigned long, unsigned long,
+		      unsigned long, unsigned long, unsigned long, unsigned long) = NULL;
+void (*kh_do_brk)(struct mm_struct *, unsigned long) = NULL;
+void (*kh_expand_stack)(struct vm_area_struct *, unsigned long) = NULL;
+void (*kh_do_mprotect)(struct mm_struct *, unsigned long, size_t,
+		       unsigned long) = NULL;
 
 int krg_do_execve(struct task_struct *tsk, struct mm_struct *mm)
 {
@@ -287,7 +294,7 @@ int init_anon_vma_kddm_set(struct task_struct *tsk,
 	mm->mm_id = 0;
 	krgnodes_clear (mm->copyset);
 
-	r = create_anon_vma_kddm_set(mm);
+	r = create_anon_vma_kddm_set(tsk, mm);
 	if (r) {
 		BUG();
 		return r;
@@ -306,7 +313,30 @@ int init_anon_vma_kddm_set(struct task_struct *tsk,
 static void kcb_do_mmap(struct vm_area_struct *vma)
 {
 	if (vma->vm_mm->anon_vma_kddm_set)
-		check_link_vma_to_anon_memory_kddm_set (vma);
+		check_link_vma_to_anon_memory_kddm_set(vma);
+}
+
+static void kcb_notify_mmap(struct vm_area_struct *vma)
+{
+	struct mm_struct *mm = vma->vm_mm;
+	struct mm_vma_msg msg;
+	krgnodemask_t copyset;
+
+	if (current->krg_mm_remote_apply || !mm->anon_vma_kddm_set ||
+	    !(vma->vm_flags & VM_KDDM) || !mm->mm_id ||
+	    krgnode_is_unique(kerrighed_node_id, mm->copyset))
+		return;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.mm_id = mm->mm_id;
+	msg.start = vma->vm_start;
+	msg.len = vma->vm_end - vma->vm_start;
+	msg.vm_flags = vma->vm_flags;
+	msg.pgoff = vma->vm_pgoff;
+
+	krgnodes_copy(copyset, mm->copyset);
+	krgnode_clear(kerrighed_node_id, copyset);
+	rpc_sync_m(RPC_MM_MMAP_REGION, &copyset, &msg, sizeof(msg));
 }
 
 
@@ -397,6 +427,9 @@ static void kcb_do_munmap(struct mm_struct *mm,
 {
 	struct mm_munmap_msg msg;
 
+	if (current->krg_mm_remote_apply)
+		return;
+
 	if ((!anon_vma(vma)) || (!mm->mm_id))
 		return;
 
@@ -409,6 +442,56 @@ static void kcb_do_munmap(struct mm_struct *mm,
 
 
 
+
+static void kcb_do_mremap(struct mm_struct *mm, unsigned long addr,
+			  unsigned long old_len, unsigned long new_len,
+			  unsigned long flags, unsigned long new_addr,
+			  unsigned long result)
+{
+	struct mm_vma_msg msg;
+	krgnodemask_t copyset;
+
+	if (current->krg_mm_remote_apply || !mm->mm_id ||
+	    krgnode_is_unique(kerrighed_node_id, mm->copyset))
+		return;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.mm_id = mm->mm_id; msg.start = addr; msg.old_len = old_len;
+	msg.new_len = new_len; msg.flags = flags; msg.new_addr = new_addr;
+	msg.result = result;
+	krgnodes_copy(copyset, mm->copyset); krgnode_clear(kerrighed_node_id, copyset);
+	rpc_sync_m(RPC_MM_MREMAP, &copyset, &msg, sizeof(msg));
+}
+
+static void kcb_do_brk(struct mm_struct *mm, unsigned long brk)
+{
+	struct mm_vma_msg msg; krgnodemask_t copyset;
+	if (current->krg_mm_remote_apply || !mm->mm_id ||
+	    krgnode_is_unique(kerrighed_node_id, mm->copyset)) return;
+	memset(&msg, 0, sizeof(msg)); msg.mm_id = mm->mm_id; msg.brk = brk;
+	krgnodes_copy(copyset, mm->copyset); krgnode_clear(kerrighed_node_id, copyset);
+	rpc_sync_m(RPC_MM_DO_BRK, &copyset, &msg, sizeof(msg));
+}
+
+static void kcb_expand_stack(struct vm_area_struct *vma, unsigned long address)
+{
+	struct mm_struct *mm = vma->vm_mm; struct mm_vma_msg msg; krgnodemask_t copyset;
+	if (current->krg_mm_remote_apply || !mm->mm_id ||
+	    krgnode_is_unique(kerrighed_node_id, mm->copyset)) return;
+	memset(&msg, 0, sizeof(msg)); msg.mm_id = mm->mm_id; msg.start = vma->vm_start; msg.result = address;
+	krgnodes_copy(copyset, mm->copyset); krgnode_clear(kerrighed_node_id, copyset);
+	rpc_sync_m(RPC_MM_EXPAND_STACK, &copyset, &msg, sizeof(msg));
+}
+
+static void kcb_do_mprotect(struct mm_struct *mm, unsigned long start, size_t len, unsigned long prot)
+{
+	struct mm_vma_msg msg; krgnodemask_t copyset;
+	if (current->krg_mm_remote_apply || !mm->mm_id ||
+	    krgnode_is_unique(kerrighed_node_id, mm->copyset)) return;
+	memset(&msg, 0, sizeof(msg)); msg.mm_id = mm->mm_id; msg.start = start; msg.len = len; msg.prot = prot;
+	krgnodes_copy(copyset, mm->copyset); krgnode_clear(kerrighed_node_id, copyset);
+	rpc_sync_m(RPC_MM_MPROTECT, &copyset, &msg, sizeof(msg));
+}
 
 /*****************************************************************************/
 /*                                                                           */
@@ -436,7 +519,12 @@ void mm_struct_init (void)
 	hook_register(&kh_mm_get, kcb_mm_get);
 	hook_register(&kh_mm_release, kcb_mm_release);
 	hook_register(&kh_do_mmap, kcb_do_mmap);
+	hook_register(&kh_notify_mmap, kcb_notify_mmap);
 	hook_register(&kh_do_munmap, kcb_do_munmap);
+	hook_register(&kh_do_mremap, kcb_do_mremap);
+	hook_register(&kh_do_brk, kcb_do_brk);
+	hook_register(&kh_expand_stack, kcb_expand_stack);
+	hook_register(&kh_do_mprotect, kcb_do_mprotect);
 	hook_register(&kh_fill_pte, kcb_fill_pte);
 	hook_register(&kh_zap_pte, kcb_zap_pte);
 }

@@ -624,6 +624,11 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 out:
 	if (ret & ~PAGE_MASK)
 		vm_unacct_memory(charged);
+#ifdef CONFIG_KRG_MM
+	if (!(ret & ~PAGE_MASK) && kh_do_mremap && mm->anon_vma_kddm_set &&
+	    !current->krg_mm_remote_apply)
+		kh_do_mremap(mm, addr, old_len, new_len, flags, new_addr, ret);
+#endif
 	up_write(&current->mm->mmap_sem);
 	if (locked && new_len > old_len)
 		mm_populate(new_addr + old_len, new_len - old_len);

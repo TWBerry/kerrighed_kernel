@@ -17,6 +17,21 @@
 
 
 
+typedef struct mm_vma_msg {
+	unique_id_t mm_id;
+	unsigned long start;
+	size_t len;
+	unsigned long flags;
+	unsigned long vm_flags;
+	unsigned long pgoff;
+	unsigned long old_len;
+	unsigned long new_len;
+	unsigned long new_addr;
+	unsigned long result;
+	unsigned long brk;
+	unsigned long prot;
+} mm_vma_msg_t;
+
 typedef struct mm_munmap_msg {
 	unique_id_t mm_id;
 	unsigned long start;

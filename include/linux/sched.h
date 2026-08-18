@@ -1905,6 +1905,9 @@ struct task_struct {
 #ifdef CONFIG_KRG_PROC
 	struct task_kddm_object *task_obj;
 #endif
+#ifdef CONFIG_KRG_MM
+	unsigned int krg_mm_remote_apply;
+#endif
 #ifdef CONFIG_KRG_EPM
 	int krg_action_flags;
 	struct task_struct *effective_current;

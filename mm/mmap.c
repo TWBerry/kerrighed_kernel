@@ -376,6 +376,10 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 
 set_brk:
 	mm->brk = brk;
+#ifdef CONFIG_KRG_MM
+	if (kh_do_brk && mm->anon_vma_kddm_set && !current->krg_mm_remote_apply)
+		kh_do_brk(mm, brk);
+#endif
 	populate = newbrk > oldbrk && (mm->def_flags & VM_LOCKED) != 0;
 	up_write(&mm->mmap_sem);
 	userfaultfd_unmap_complete(mm, &uf);
@@ -1658,6 +1662,14 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	}
 
 	addr = mmap_region(file, addr, len, vm_flags, pgoff, uf);
+#ifdef CONFIG_KRG_MM
+	if (!IS_ERR_VALUE(addr) && kh_notify_mmap && mm->anon_vma_kddm_set &&
+	    !current->krg_mm_remote_apply) {
+		struct vm_area_struct *krg_vma = find_vma(mm, addr);
+		if (krg_vma && krg_vma->vm_start == addr)
+			kh_notify_mmap(krg_vma);
+	}
+#endif
 	if (!IS_ERR_VALUE(addr) &&
 	    ((vm_flags & VM_LOCKED) ||
 	     (flags & (MAP_POPULATE | MAP_NONBLOCK)) == MAP_POPULATE))
@@ -2638,7 +2650,13 @@ __setup("stack_guard_gap=", cmdline_parse_stack_guard_gap);
 #ifdef CONFIG_STACK_GROWSUP
 int expand_stack(struct vm_area_struct *vma, unsigned long address)
 {
-	return expand_upwards(vma, address);
+	int ret = expand_upwards(vma, address);
+#ifdef CONFIG_KRG_MM
+	if (!ret && kh_expand_stack && vma->vm_mm->anon_vma_kddm_set &&
+	    !current->krg_mm_remote_apply)
+		kh_expand_stack(vma, address);
+#endif
+	return ret;
 }
 
 struct vm_area_struct *
@@ -2660,7 +2678,13 @@ find_extend_vma(struct mm_struct *mm, unsigned long addr)
 #else
 int expand_stack(struct vm_area_struct *vma, unsigned long address)
 {
-	return expand_downwards(vma, address);
+	int ret = expand_downwards(vma, address);
+#ifdef CONFIG_KRG_MM
+	if (!ret && kh_expand_stack && vma->vm_mm->anon_vma_kddm_set &&
+	    !current->krg_mm_remote_apply)
+		kh_expand_stack(vma, address);
+#endif
+	return ret;
 }
 
 struct vm_area_struct *
