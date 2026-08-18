@@ -169,8 +169,7 @@ config KRG_PROC
 
 config KRG_EPM
 	bool "KerEPM"
-#	depends on KERRIGHED && KRG_PROC && KRG_CAP && KRG_MM && (KRG_DVFS || KRG_FAF)
-	depends on KERRIGHED && KRG_PROC && KRG_CAP
+	depends on KERRIGHED && KRG_PROC && KRG_CAP && KRG_MM && KRG_DVFS && KRG_FAF
 	help
 	  Enhanced Process Management (process migration, checkpoint/restart...)
 
