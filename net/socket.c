@@ -217,7 +217,7 @@ int move_addr_to_kernel(void __user *uaddr, int ulen, struct sockaddr_storage *k
  *	specified. Zero is returned for a success.
  */
 
-static int move_addr_to_user(struct sockaddr_storage *kaddr, int klen,
+int move_addr_to_user(struct sockaddr_storage *kaddr, int klen,
 			     void __user *uaddr, int __user *ulen)
 {
 	int err;
@@ -2341,7 +2341,7 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 #ifdef CONFIG_KRG_FAF
 	sock = sockfd_lookup_light(fd, &err, &fput_needed, &faf_file);
 	if (faf_file) {
-		err = krg_faf_sendmmsg(faf_file, msg, vlen, flags);
+		err = krg_faf_sendmmsg(faf_file, mmsg, vlen, flags);
 		fput_light(faf_file, fput_needed);
 		return err;
 	}
@@ -2542,11 +2542,14 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 	struct compat_mmsghdr __user *compat_entry;
 	struct msghdr msg_sys;
 	struct timespec end_time;
+#ifdef CONFIG_KRG_FAF
+	struct file *faf_file;
+#endif
 
 #ifdef CONFIG_KRG_FAF
 	sock = sockfd_lookup_light(fd, &err, &fput_needed, &faf_file);
 	if (faf_file) {
-		err = krg_faf_recvmmsg(faf_file, msg, vlen, flags, timeout);
+		err = krg_faf_recvmmsg(faf_file, mmsg, vlen, flags, timeout);
 		fput_light(faf_file, fput_needed);
 		return err;
 	}

@@ -100,13 +100,12 @@ out:
 static struct ruaccess_desc *ruaccess_desc_find(void)
 {
 	struct ruaccess_desc *desc;
-	struct hlist_node *node;
 	struct task_struct *tsk = current;
 	unsigned long hash;
 
 	hash = hash_ptr(tsk, RUACCESS_DESC_BITS);
 	rcu_read_lock();
-	hlist_for_each_entry_rcu(desc, node, &desc_table[hash], list)
+	hlist_for_each_entry_rcu(desc, &desc_table[hash], list)
 		if (desc->thread == tsk)
 			goto out;
 	rcu_read_unlock();
@@ -324,7 +323,7 @@ static void handle_strncpy(const struct ruaccess_req *req, void *buf,
 {
 	long res;
 
-	res = __strncpy_from_user(buf, req->u.strncpy.src, req->len);
+	res = strncpy_from_user(buf, req->u.strncpy.src, req->len);
 	*count = (res > 0) ? min((unsigned long)res + 1, req->len) : 0;
 	*ret = (unsigned long)res;
 }

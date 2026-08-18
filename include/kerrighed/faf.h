@@ -31,6 +31,7 @@ void krg_faf_srv_close(struct file *file);
 struct sockaddr;
 struct msghdr;
 
+struct mmsghdr;
 long krg_faf_bind(struct file *file, struct sockaddr __user *umyaddr,
 		  int addrlen);
 long krg_faf_connect(struct file *file,
@@ -63,11 +64,11 @@ long krg_faf_getsockopt(struct file *file, int level, int optname,
 			char __user *optval, int __user *optlen);
 long krg_faf_sendmsg(struct file *file, struct msghdr __user *msg,
 		     unsigned flags);
-long krg_faf_sendmmsg(struct file *file, struct msghdr __user *msg,
+long krg_faf_sendmmsg(struct file *file, struct mmsghdr __user *msg,
 		     unsigned int vlen, unsigned flags);
 long krg_faf_recvmsg(struct file *file, struct msghdr __user *msg,
 		     unsigned int flags);
-long krg_faf_recvmmsg(struct file *file, struct msghdr __user *msg,
+long krg_faf_recvmmsg(struct file *file, struct mmsghdr __user *msg,
 		     unsigned int vlen, unsigned int flags, struct timespec *timeout);
 int krg_faf_poll_wait(struct file *file, int wait);
 void krg_faf_poll_dequeue(struct file *file);

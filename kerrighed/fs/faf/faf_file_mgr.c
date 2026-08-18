@@ -42,10 +42,10 @@ struct file *create_faf_file_from_krg_desc (struct task_struct *task,
 	if (!data)
 		return NULL;
 
-	file = get_empty_filp ();
+	file = get_empty_filp();
 
-	if (!file) {
-		kmem_cache_free (faf_client_data_cachep, data);
+	if (IS_ERR(file)) {
+		kmem_cache_free(faf_client_data_cachep, data);
 		goto exit;
 	}
 

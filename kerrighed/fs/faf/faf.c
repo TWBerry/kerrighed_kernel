@@ -87,7 +87,7 @@ int close_faf_file(struct file * file)
         BUG_ON (faf_file != file);
 
         rcu_assign_pointer(fdt->fd[fd], NULL);
-        FD_CLR(fd, fdt->close_on_exec);
+        __clear_bit(fd, fdt->close_on_exec);
         __put_unused_fd(files, fd);
 
 	spin_unlock(&files->file_lock);

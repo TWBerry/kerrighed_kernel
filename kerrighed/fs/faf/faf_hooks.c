@@ -502,7 +502,7 @@ long krg_faf_bind (struct file * file,
 
 	msg.server_fd = data->server_fd;
 
-	r = move_addr_to_kernel(umyaddr, addrlen, (struct sockaddr *)&msg.sa);
+	r = move_addr_to_kernel(umyaddr, addrlen, &msg.sa);
 	if (r)
 		goto out;
 
@@ -524,7 +524,7 @@ long krg_faf_connect (struct file * file,
 
 	msg.server_fd = data->server_fd;
 
-	r = move_addr_to_kernel(uservaddr, addrlen, (struct sockaddr *)&msg.sa);
+	r = move_addr_to_kernel(uservaddr, addrlen, &msg.sa);
 	if (r)
 		goto out;
 
@@ -634,7 +634,7 @@ long krg_faf_accept(struct file * file,
 	put_dvfs_file_struct (objid);
 
 	if (upeer_sockaddr) {
-		r = move_addr_to_user((struct sockaddr *)&sa, sa_len,
+		r = move_addr_to_user(&sa, sa_len,
 				      upeer_sockaddr, upeer_addrlen);
 		if (r)
 			goto err_close_faf_file;
@@ -682,7 +682,7 @@ long krg_faf_getsockname (struct file * file,
 	rpc_end(desc, 0);
 
 	if (!r)
-		r = move_addr_to_user((struct sockaddr *)&sa, sa_len,
+		r = move_addr_to_user(&sa, sa_len,
 				      usockaddr, usockaddr_len);
 
 out:
@@ -713,7 +713,7 @@ long krg_faf_getpeername (struct file * file,
 	rpc_end(desc, 0);
 
 	if (!r)
-		r = move_addr_to_user((struct sockaddr *)&sa, sa_len,
+		r = move_addr_to_user(&sa, sa_len,
 				      usockaddr, usockaddr_len);
 
 	return r;
@@ -772,7 +772,7 @@ long krg_faf_sendto (struct file * file,
 	int r;
 
 	if (addr) {
-		r = move_addr_to_kernel(addr, addr_len, (struct sockaddr *)&msg.sa);
+		r = move_addr_to_kernel(addr, addr_len, &msg.sa);
 		if (r)
 			goto out;
 		msg.addrlen = addr_len;
@@ -899,7 +899,7 @@ long krg_faf_recvfrom (struct file * file,
 	if (addr) {
 		int err;
 
-		err = move_addr_to_user((struct sockaddr *)&sa, sa_len,
+		err = move_addr_to_user(&sa, sa_len,
 					addr, addr_len);
 		if (err) {
 			r = err;
@@ -1052,29 +1052,38 @@ long krg_faf_sendmsg (struct file * file,
 	return r;
 }
 
-long krg_faf_sendmmsg (struct file * file,
-		      struct msghdr __user *msghdr,
-			  unsigned int vlen,
-		      unsigned flags)
+long krg_faf_sendmmsg(struct file *file,
+		       struct mmsghdr __user *mmsg,
+		       unsigned int vlen, unsigned int flags)
 {
-	faf_client_data_t *data = file->private_data;
-	struct faf_sendmmsg_msg msg;
-	int r;
-	struct rpc_desc* desc;
+	unsigned int datagrams = 0;
+	int err = 0;
 
-	msg.server_fd = data->server_fd;
-	msg.vlen = vlen;
-	msg.flags = flags;
+	/*
+	 * Linux 3.10 added sendmmsg after the original Kerrighed FAF code.
+	 * Preserve sendmmsg partial-success semantics by composing the already
+	 * established FAF sendmsg operation rather than pretending that one
+	 * msghdr is an mmsghdr array on the server.  This is correctness-first;
+	 * batching several messages into one FAF RPC can be added later.
+	 */
+	while (datagrams < vlen) {
+		struct mmsghdr __user *entry = &mmsg[datagrams];
 
-	desc = rpc_begin(RPC_FAF_SENDMMSG, data->server_id);
-	rpc_pack_type(desc, msg);
+		err = krg_faf_sendmsg(file,
+				      (struct msghdr __user *)entry,
+				      flags);
+		if (err < 0)
+			break;
 
-	send_msghdr(desc, msghdr, 1);
+		if (put_user(err, &entry->msg_len)) {
+			err = -EFAULT;
+			break;
+		}
 
-	rpc_unpack_type(desc, r);
-	rpc_end(desc, 0);
+		datagrams++;
+	}
 
-	return r;
+	return datagrams ? datagrams : err;
 }
 
 long krg_faf_recvmsg(struct file * file,
@@ -1103,39 +1112,57 @@ long krg_faf_recvmsg(struct file * file,
 	return r;
 }
 
-long krg_faf_recvmmsg(struct file * file,
-		     struct msghdr __user *msghdr,
-			 unsigned int vlen,
-		     unsigned int flags,
-			 struct timespec *timeout)
+long krg_faf_recvmmsg(struct file *file,
+		       struct mmsghdr __user *mmsg,
+		       unsigned int vlen, unsigned int flags,
+		       struct timespec *timeout)
 {
-	faf_client_data_t *data = file->private_data;
-	struct faf_recvmmsg_msg msg;
-	int r;
-	struct rpc_desc* desc;
+	unsigned int datagrams = 0;
+	struct timespec end_time;
+	int err = 0;
 
-	msg.server_fd = data->server_fd;
-	msg.vlen = vlen;
-	msg.flags = flags;
+	/*
+	 * Keep the native recvmmsg timeout and MSG_WAITFORONE behavior while
+	 * composing the existing FAF recvmsg transport one datagram at a time.
+	 */
+	if (timeout &&
+	    poll_select_set_timeout(&end_time, timeout->tv_sec,
+				timeout->tv_nsec))
+		return -EINVAL;
 
-	if (timeout) {
-		msg.need_timeout = true;
-		msg.sec = timeout->tv_sec;
-		msg.nsec = timeout->tv_nsec;
-	} else
-		msg.need_timeout = false;
+	while (datagrams < vlen) {
+		struct mmsghdr __user *entry = &mmsg[datagrams];
 
-	desc = rpc_begin(RPC_FAF_RECVMMSG, data->server_id);
-	rpc_pack_type(desc, msg);
+		err = krg_faf_recvmsg(file,
+				      (struct msghdr __user *)entry,
+				      flags & ~MSG_WAITFORONE);
+		if (err < 0)
+			break;
 
-	send_msghdr(desc, msghdr, 1);
+		if (put_user(err, &entry->msg_len)) {
+			err = -EFAULT;
+			break;
+		}
 
-	rpc_unpack_type(desc, r);
-	recv_msghdr(desc, msghdr, 1);
+		datagrams++;
 
-	rpc_end(desc, 0);
+		if (flags & MSG_WAITFORONE)
+			flags |= MSG_DONTWAIT;
 
-	return r;
+		if (timeout) {
+			ktime_get_ts(timeout);
+			*timeout = timespec_sub(end_time, *timeout);
+			if (timeout->tv_sec < 0) {
+				timeout->tv_sec = 0;
+				timeout->tv_nsec = 0;
+				break;
+			}
+			if (!timeout->tv_sec && !timeout->tv_nsec)
+				break;
+		}
+	}
+
+	return datagrams ? datagrams : err;
 }
 
 char *krg_faf_d_path(struct file *file, char *buffer, int size)
@@ -1249,7 +1276,7 @@ static void handle_faf_poll_notify(struct rpc_desc *desc,
 	dvfs_file = _kddm_get_object_no_ft(dvfs_file_struct_ctnr, dvfs_id);
 	if (dvfs_file && dvfs_file->file) {
 		/* TODO: still required? */
-		if (atomic_read (&dvfs_file->file->f_count) == 0)
+		if (atomic_long_read(&dvfs_file->file->f_count) == 0)
 			dvfs_file->file = NULL;
 	}
 	if (!dvfs_file || !dvfs_file->file)

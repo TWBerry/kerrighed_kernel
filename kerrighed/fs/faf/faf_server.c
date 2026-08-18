@@ -353,12 +353,11 @@ static void faf_poll_notify_nodes(unsigned long dvfs_id)
 	struct dvfs_file_struct *dvfs_file;
 	struct faf_polled_fd *polled_fd;
 	struct faf_polled_fd_node *polled_fd_node;
-	struct hlist_node *pos;
 
 	dvfs_file = _kddm_get_object_no_ft(dvfs_file_struct_ctnr, dvfs_id);
 	if (dvfs_file && dvfs_file->file) {
 		/* TODO: still required? */
-		if (atomic_read (&dvfs_file->file->f_count) == 0)
+		if (atomic_long_read(&dvfs_file->file->f_count) == 0)
 			dvfs_file->file = NULL;
 	}
 	if (!dvfs_file || !dvfs_file->file)
@@ -370,7 +369,7 @@ static void faf_poll_notify_nodes(unsigned long dvfs_id)
 	if (!polled_fd)
 		goto out_unlock;
 
-	hlist_for_each_entry(polled_fd_node, pos, &polled_fd->nodes, list)
+	hlist_for_each_entry(polled_fd_node, &polled_fd->nodes, list)
 		faf_poll_notify_node(polled_fd_node->node_id, dvfs_id);
 
 out_unlock:
@@ -437,10 +436,9 @@ static struct faf_polled_fd *__faf_polled_fd_find(unsigned long dvfs_id)
 {
 	struct faf_polled_fd *polled_fd;
 	struct hlist_head *hash_list;
-	struct hlist_node *pos;
 
 	hash_list = &faf_polled_fd_hash[faf_polled_fd_hashfn(dvfs_id)];
-	hlist_for_each_entry(polled_fd, pos, hash_list, list)
+	hlist_for_each_entry(polled_fd, hash_list, list)
 		if (polled_fd->dvfs_id == dvfs_id)
 			return polled_fd;
 	return NULL;
@@ -482,9 +480,8 @@ __faf_polled_fd_find_node(struct faf_polled_fd *polled_fd,
 			  kerrighed_node_t node)
 {
 	struct faf_polled_fd_node *polled_fd_node;
-	struct hlist_node *pos;
 
-	hlist_for_each_entry(polled_fd_node, pos, &polled_fd->nodes, list)
+	hlist_for_each_entry(polled_fd_node, &polled_fd->nodes, list)
 		if (polled_fd_node->node_id == node)
 			return polled_fd_node;
 	return NULL;
@@ -590,7 +587,7 @@ static int faf_polled_fd_remove(kerrighed_node_t client,
 	dvfs_file = _kddm_get_object_no_ft(dvfs_file_struct_ctnr, dvfs_id);
 	if (dvfs_file && dvfs_file->file) {
 		/* TODO: still required? */
-		if (atomic_read (&dvfs_file->file->f_count) == 0)
+		if (atomic_long_read(&dvfs_file->file->f_count) == 0)
 			dvfs_file->file = NULL;
 	}
 
@@ -1005,23 +1002,6 @@ int handle_faf_sendmsg (struct rpc_desc* desc,
 	return r;
 }
 
-int handle_faf_sendmmsg (struct rpc_desc* desc,
-			void *msgIn, size_t size)
-{
-	struct faf_sendmmsg_msg *msg = msgIn;
-	int r;
-	struct msghdr msghdr;
-
-	memset(&msghdr, 0, sizeof(msghdr));
-
-	recv_msghdr(desc, &msghdr, 0);
-
-	r = sys_sendmmsg (msg->server_fd, &msghdr, msg->vlen, msg->flags);
-
-	free_msghdr(&msghdr);
-
-	return r;
-}
 
 int handle_faf_recvmsg (struct rpc_desc* desc,
 			void *msgIn, size_t size)
@@ -1043,32 +1023,6 @@ int handle_faf_recvmsg (struct rpc_desc* desc,
 	return r;
 }
 
-int handle_faf_recvmmsg (struct rpc_desc* desc,
-			void *msgIn, size_t size)
-{
-	struct faf_recvmmsg_msg *msg = msgIn;
-	int r;
-	struct msghdr msghdr;
-	struct timespec timeout;
-
-	memset(&msghdr, 0, sizeof(msghdr));
-
-	recv_msghdr(desc, &msghdr, 0);
-
-	if (msg->need_timeout) {
-		timeout.tv_sec = msg->sec;
-		timeout.tv_nsec = msg->nsec;
-		r = sys_recvmmsg(msg->server_fd, &msg->msghdr, msg->vlen, msg->flags, &timeout);
-	} else {
-		r = sys_recvmmsg(msg->server_fd, &msg->msghdr, msg->vlen, msg->flags, NULL);
-	}
-
-	send_msghdr(desc, &msghdr, 0);
-
-	free_msghdr(&msghdr);
-
-	return r;
-}
 
 int handle_faf_notify_close (struct rpc_desc* desc,
 			     void *msgIn, size_t size)
@@ -1125,9 +1079,7 @@ void faf_server_init (void)
 	rpc_register_void(RPC_FAF_SETSOCKOPT, handle_faf_setsockopt, 0);
 	rpc_register_void(RPC_FAF_GETSOCKOPT, handle_faf_getsockopt, 0);
 	rpc_register_int(RPC_FAF_SENDMSG, handle_faf_sendmsg, 0);
-	rpc_register_int(RPC_FAF_SENDMMSG, handle_faf_sendmmsg, 0);
 	rpc_register_int(RPC_FAF_RECVMSG, handle_faf_recvmsg, 0);
-	rpc_register_int(RPC_FAF_RECVMMSG, handle_faf_recvmmsg, 0);
 	rpc_register_int(RPC_FAF_NOTIFY_CLOSE, handle_faf_notify_close, 0);
 }
 
