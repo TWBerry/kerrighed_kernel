@@ -7551,6 +7551,7 @@ static const struct trace_print_flags pageflag_names[] = {
 #ifdef CONFIG_KRG_MM
 	{1UL << PG_to_invalidate,        "to_invalidate" },
 	{1UL << PG_to_set_read_only,     "to_set_read_only" },
+	{1UL << PG_migratable,           "migratable" },
 #ifdef CONFIG_DEBUG_PAGEALLOC
 	{1UL << PG_in_vec,               "in_vec"        },
 #endif
