@@ -573,7 +573,7 @@ static int cr_import_complete_regular_file(struct task_struct *fake,
 		/* the file has not been imported */
 		return 0;
 
-	BUG_ON(atomic_read(&(file_link->file->f_count)) <= 1);
+	BUG_ON(atomic_long_read(&(file_link->file->f_count)) <= 1);
 	fput(file_link->file);
 
 	return 0;
@@ -663,7 +663,7 @@ static int cr_import_complete_dvfs_file(struct task_struct *fake,
 
 	file = dvfs_file->file;
 	BUG_ON(!file);
-	BUG_ON(atomic_read(&file->f_count) <= 1);
+	BUG_ON(atomic_long_read(&file->f_count) <= 1);
 
 	fput(file);
 

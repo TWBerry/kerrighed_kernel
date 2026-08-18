@@ -56,6 +56,13 @@ static void __free_fdtable(struct fdtable *fdt)
 	kfree(fdt);
 }
 
+#ifdef CONFIG_KRG_DVFS
+void free_fdtable(struct fdtable *fdt)
+{
+	__free_fdtable(fdt);
+}
+#endif
+
 static void free_fdtable_rcu(struct rcu_head *rcu)
 {
 	__free_fdtable(container_of(rcu, struct fdtable, rcu));

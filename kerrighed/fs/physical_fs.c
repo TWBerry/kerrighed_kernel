@@ -49,30 +49,33 @@ struct file *open_physical_file (char *filename,
 	const struct cred *old_cred;
 	struct cred *override_cred;
 	struct path old_root;
+	struct path init_root;
 	struct file *file;
 
-	/* no need to lock the fs_struct: we are in a kernel-thread importing
-	   file from the ghost */
-	old_root = current->fs->root;
+	get_fs_root(current->fs, &old_root);
+	get_fs_root(init_task.fs, &init_root);
 
 	override_cred = prepare_creds();
-	if (!override_cred)
+	if (!override_cred) {
+		path_put(&init_root);
+		path_put(&old_root);
 		return ERR_PTR(-ENOMEM);
+	}
 
 	override_cred->fsuid = fsuid;
 	override_cred->fsgid = fsgid;
 	old_cred = override_creds(override_cred);
 
-	read_lock(&init_task.fs->lock);
-	current->fs->root = init_task.fs->root;
-	read_unlock(&init_task.fs->lock);
+	set_fs_root(current->fs, &init_root);
+	path_put(&init_root);
 
 	file = filp_open (filename, flags, mode);
 
 	revert_creds(old_cred);
 	put_cred(override_cred);
 
-	current->fs->root = old_root;
+	set_fs_root(current->fs, &old_root);
+	path_put(&old_root);
 
 	return file;
 }
@@ -95,7 +98,7 @@ int remove_physical_file (struct file *file)
 	dentry = file->f_dentry;
 	dir = dentry->d_parent->d_inode;
 
-	res = vfs_unlink (dir, dentry);
+	res = vfs_unlink(dir, dentry, NULL);
 	dput (dentry);
 	put_filp (file);
 

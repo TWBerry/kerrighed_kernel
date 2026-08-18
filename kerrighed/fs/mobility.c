@@ -16,6 +16,7 @@
 #include <linux/namei.h>
 #include <linux/mount.h>
 #include <linux/mnt_namespace.h>
+#include <linux/nsproxy.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -27,6 +28,7 @@
 #include <kerrighed/app_shared.h>
 #include <kerrighed/app_terminal.h>
 #include <kerrighed/file.h>
+#include <kerrighed/namespace.h>
 #include "mobility.h"
 #include <kerrighed/regular_file_mgr.h>
 #include "physical_fs.h"
@@ -370,7 +372,7 @@ int export_open_files (struct epm_action *action,
 
 	/* Export files opened by the process */
 	for (i = 0; i < last_open_fd; i++) {
-		if (FD_ISSET (i, fdt->open_fds)) {
+		if (fd_is_open(i, fdt)) {
 			BUG_ON (!fdt->fd[i]);
 			file = fdt->fd[i];
 
@@ -401,7 +403,7 @@ static int cr_write_open_files_id(ghost_t *ghost,
 
 	/* Write id of files opened by the process */
 	for (i = 0; i < last_open_fd; i++) {
-		if (FD_ISSET (i, fdt->open_fds)) {
+		if (fd_is_open(i, fdt)) {
 			BUG_ON (!fdt->fd[i]);
 			file = fdt->fd[i];
 
@@ -469,7 +471,7 @@ static int cr_add_files_to_shared_table(struct task_struct *tsk,
 
 	/* Write id of files opened by the process */
 	for (i = 0; i < last_open_fd; i++) {
-		if (FD_ISSET (i, fdt->open_fds)) {
+		if (fd_is_open(i, fdt)) {
 			BUG_ON (!fdt->fd[i]);
 			file = fdt->fd[i];
 
@@ -819,7 +821,7 @@ int import_open_files (struct epm_action *action,
 
 	/* Reception of the files list and their names */
 	for (i = 0; i < last_open_fd; i++) {
-		if (FD_ISSET (i, fdt->open_fds)) {
+		if (fd_is_open(i, fdt)) {
 			r = import_one_open_file (action, ghost, tsk, i,
 						  (void *) &fdt->fd[i]);
 			if (r != 0)
@@ -949,7 +951,7 @@ static int cr_link_to_open_files(struct epm_action *action,
 
 	/* Linking the files in the files_struct */
 	for (i = 0; i < last_open_fd; i++) {
-		if (FD_ISSET (i, fdt->open_fds)) {
+		if (fd_is_open(i, fdt)) {
 			r = cr_link_to_file(action, ghost, tsk,
 					    (void *) &fdt->fd[i]);
 			if (r != 0)
@@ -1034,8 +1036,10 @@ int import_files_struct (struct epm_action *action,
 	if (r)
 		goto exit_free_files;
 
-	atomic_set (&files->count, 1);
-	spin_lock_init (&files->file_lock);
+	atomic_set(&files->count, 1);
+	spin_lock_init(&files->file_lock);
+	files->resize_in_progress = false;
+	init_waitqueue_head(&files->resize_wait);
 
 	r = ghost_read (ghost, &last_open_fd, sizeof (int));
 	if (r)
@@ -1072,10 +1076,10 @@ int import_files_struct (struct epm_action *action,
 	}
 	else {
 		fdt = &files->fdtab;
-		INIT_RCU_HEAD(&fdt->rcu);
-		fdt->next = NULL;
-		fdt->close_on_exec = (fd_set *)&files->close_on_exec_init;
-		fdt->open_fds = (fd_set *)&files->open_fds_init;
+		fdt->max_fds = NR_OPEN_DEFAULT;
+		fdt->close_on_exec = files->close_on_exec_init;
+		fdt->open_fds = files->open_fds_init;
+		fdt->full_fds_bits = files->full_fds_bits_init;
 		fdt->fd = &files->fd_array[0];
 	}
 
@@ -1274,7 +1278,9 @@ int import_fs_struct (struct epm_action *action,
 		return -ENOMEM;
 
 	fs->users = 1;
-	rwlock_init (&fs->lock);
+	fs->in_exec = 0;
+	spin_lock_init(&fs->lock);
+	seqcount_init(&fs->seq);
 
 	/* Import the umask value */
 
@@ -1319,11 +1325,24 @@ exit_free_fs:
 int import_mnt_namespace(struct epm_action *action,
 			 ghost_t *ghost, struct task_struct *tsk)
 {
-	if (tsk->nsproxy->mnt_ns != NULL)
-	{
-		get_mnt_ns(tsk->nsproxy->mnt_ns);
-		tsk->nsproxy->mnt_ns = current->nsproxy->mnt_ns;
-	}
+	struct mnt_namespace *old_ns;
+	struct mnt_namespace *new_ns;
+
+	if (!tsk->nsproxy || !tsk->nsproxy->krg_ns)
+		return -EINVAL;
+
+	new_ns = tsk->nsproxy->krg_ns->root_nsproxy.mnt_ns;
+	if (!new_ns)
+		return -EINVAL;
+
+	old_ns = tsk->nsproxy->mnt_ns;
+	if (old_ns == new_ns)
+		return 0;
+
+	krg_get_mnt_ns(new_ns);
+	tsk->nsproxy->mnt_ns = new_ns;
+	if (old_ns)
+		put_mnt_ns(old_ns);
 
 	return 0;
 }
@@ -1336,7 +1355,15 @@ int import_mnt_namespace(struct epm_action *action,
 
 void unimport_mnt_namespace(struct task_struct *tsk)
 {
-	exit_mnt_ns(tsk);
+	struct mnt_namespace *ns;
+
+	if (!tsk->nsproxy)
+		return;
+
+	ns = tsk->nsproxy->mnt_ns;
+	tsk->nsproxy->mnt_ns = NULL;
+	if (ns)
+		put_mnt_ns(ns);
 }
 
 void unimport_files_struct(struct task_struct *tsk)
