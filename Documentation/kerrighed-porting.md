@@ -1,4 +1,188 @@
 # Kerrighed Porting Guide
+## Post-port optimization roadmap
+
+The current Linux 3.10 Kerrighed work is primarily a correctness and
+completeness restoration effort. Performance-oriented changes must not obscure
+missing legacy semantics or make comparison with the original Kerrighed tree
+more difficult.
+
+The following areas have been identified during the port as promising
+optimization targets for a future Kerrighed generation.
+
+### Optimization rule: behavioral equivalence first
+
+No optimization should be merged merely because it appears locally faster or
+simpler.
+
+Before optimizing a restored subsystem:
+
+1. Recover the intended behavior from the legacy Kerrighed implementation.
+2. Establish compile-time and runtime correctness of the restored path.
+3. Add instrumentation capable of measuring the relevant distributed cost.
+4. Establish a reproducible baseline.
+5. Optimize the implementation.
+6. Verify that distributed semantics remain equivalent.
+7. Measure the result against the baseline.
+
+In particular, successful compilation is not evidence that a distributed
+optimization is correct.
+
+### KRGRPC
+
+KRGRPC is expected to be one of the most important optimization targets because
+its behavior affects most higher-level Kerrighed distributed services.
+
+Potential areas include batching acknowledgements where ordering semantics
+permit it, reducing unnecessary receiver and sender wakeups, reducing lock
+transitions around ordered receive queues, reducing allocation pressure, and
+improving sustained high-throughput and low-memory flow-control behavior.
+
+The restored low-memory and acknowledgement paths must be treated as protocol
+semantics rather than merely implementation details. Any optimization therefore
+requires multi-node fault and memory-pressure testing.
+
+Useful measurements include:
+
+    RPC messages/sec
+    RPC bytes/sec
+    RPC round-trip latency
+    ACKs per message
+    wakeups per RPC
+    ordered-queue depth
+    low-memory transitions
+    allocation failures
+    retransmission/recovery events
+
+### KDDM object and set flushing
+
+The restored KDDM set flushing implementation favors correctness when objects
+may disappear while a set is being traversed.
+
+The snapshot-and-flush strategy is robust, but potentially expensive for large
+distributed sets because it can require additional memory and multiple passes.
+
+Future alternatives worth investigating include chunked object-ID snapshots,
+bounded-memory iteration, safe remove-aware iterators, batching object
+relocation, avoiding repeated ownership lookups, and parallel flushing where
+ordering permits it.
+
+The lifetime guarantees currently obtained by separating object discovery from
+destructive flushing must be preserved.
+
+### KerMM reclaim and migratable pages
+
+The restored migratable-page path deliberately favors correctness over reclaim
+cost. Anonymous/shared mappings can require reverse-map traversal before a page
+can be associated with a consistent Kerrighed memory object.
+
+Possible future work includes caching distributed mapping metadata, reducing
+repeated rmap traversal, maintaining cheaper page-to-KDDM lookup information,
+batching migration candidates, improving migratable-LRU selection, and
+improving destination-node selection.
+
+Any cached mapping information must remain correct across fork, VMA mutation,
+migration, exec, and mm teardown.
+
+Useful counters include PG_migratable pages, migratable-LRU size, reclaim scans,
+rmap walks, successful and failed distributed reclaims, page injections,
+injection retries, and page relocation latency.
+
+### KerMM memory injection and placement
+
+Future versions should investigate cached placement information, batching
+injected pages, reducing repeated PID-location queries, load-aware destination
+selection, topology-aware placement, and avoiding repeated online-node scans.
+
+Placement optimization must not break ownership, copyset, or KDDM consistency.
+
+### Hotplug and cluster reconfiguration
+
+Kerrighed hotplug deliberately performs strong distributed synchronization.
+This is desirable while restoring correctness, but global barriers can become a
+scalability limit as cluster size increases.
+
+Future approaches worth evaluating include generation/epoch based membership
+transitions, reducing global synchronization phases, separating independent
+hotplug work, asynchronous preparation before the commit phase, batching
+distributed cleanup, and reducing coordinator-transfer synchronization.
+
+The restored notifier ordering must be considered part of the hotplug protocol.
+Optimizations must preserve dependency ordering between membership, RPC,
+barriers, KDDM, proc, KerMM, EPM, and coordinator management.
+
+### Namespace and container lifecycle
+
+The port currently preserves compatibility paths required while the complete
+Kerrighed namespace/container lifecycle is being restored. After runtime
+validation, duplicated bootstrap and fallback paths should be reviewed for
+possible consolidation.
+
+The long-term objective should be a single explicit lifecycle:
+
+    namespace allocation
+            |
+            v
+    distributed subsystem initialization
+            |
+            v
+    cluster membership transition
+            |
+            v
+    container becomes operational
+            |
+            v
+    hotplug / migration / distributed execution
+            |
+            v
+    ordered distributed teardown
+            |
+            v
+    namespace destruction
+
+### qrwlock and RCU opportunities
+
+Several restored paths still require global task and subsystem synchronization.
+During the port, some old tasklist-lock operations were found in code whose
+target-kernel implementation had already moved to RCU.
+
+Future auditing should classify lock sites as requiring write serialization,
+requiring stable read traversal, suitable for RCU, suitable for per-object
+locking, or suitable for lockless immutable state.
+
+Replacing qrwlock operations with RCU must be based on object-lifetime analysis,
+not merely on the apparent absence of writes in a function.
+
+### Hashtable and distributed lookup scalability
+
+Several Kerrighed subsystems perform global or namespace-wide hashtable walks.
+Potential improvements include finer-grained locking, RCU-protected lookup
+tables, per-node or per-namespace sharding, cached ownership/location
+information, generation counters for cache invalidation, and reducing full-table
+traversal during cleanup.
+
+### Instrumentation before optimization
+
+A future Kerrighed should expose enough internal telemetry that optimization
+decisions can be based on measurements rather than intuition.
+
+Instrumentation should cover KRGRPC message rates, bytes, latency, queue depths,
+ACK behavior and low-memory transitions; KDDM set/object counts, ownership
+changes, flushes and relocation latency; KerMM migratable pages, reclaim,
+injection and migration; hotplug phase/barrier/coordinator latency; and
+EPM/DVFS/FAF remote file and checkpoint/restart activity.
+
+Where practical, counters should be per-node as well as cluster-wide.
+
+### Benchmark strategy
+
+Optimization work should use repeatable workloads rather than isolated
+microbenchmarks alone. Useful workloads include RPC ping-pong and streaming,
+large KDDM set creation/destruction, distributed anonymous-memory pressure,
+fork with shared anonymous memory, process migration under memory pressure,
+node addition/removal, coordinator relocation, distributed file access,
+checkpoint/restart, and mixed process/memory/file migration.
+
+Tests should be repeated with increasing cluster sizes so that an optimization
 
 This document records the Kerrighed port used by PhiWeave OS and serves as
 a compatibility reference for future kernel ports.
