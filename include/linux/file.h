@@ -21,6 +21,9 @@ struct file_operations;
 struct vfsmount;
 struct dentry;
 struct path;
+#ifdef CONFIG_KRG_FAF
+extern struct file *get_empty_filp(void);
+#endif
 extern struct file *alloc_file(struct path *, fmode_t mode,
 	const struct file_operations *fop);
 
@@ -88,7 +91,8 @@ extern void __fput_sync(struct file *);
 struct fdtable;
 int count_open_files(struct fdtable *fdt);
 
-struct fdtable * alloc_fdtable(unsigned int nr);
+struct fdtable *alloc_fdtable(unsigned int nr);
+void free_fdtable(struct fdtable *fdt);
 #endif
 
 #endif /* __LINUX_FILE_H */
