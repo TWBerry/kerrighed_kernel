@@ -25,7 +25,7 @@ void krg_release_task(struct task_struct *p)
 	if (!kh_release_task)
 		return;
 
-		krg_task_free(p);
+	krg_task_free(p);
 }
 
 void register_krg_exit_hooks(void)

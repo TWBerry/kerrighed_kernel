@@ -113,7 +113,7 @@ static int task_import_object(struct kddm_obj *obj_entry,
 	if (retval)
 		return retval;
 
-	write_lock_irq(&tasklist_lock);
+	qwrite_lock_irq(&tasklist_lock);
 
 	dest->state = src.state;
 	dest->flags = src.flags;
@@ -141,7 +141,7 @@ static int task_import_object(struct kddm_obj *obj_entry,
 
 	dest->dumpable = src.dumpable;
 
-	write_unlock_irq(&tasklist_lock);
+	qwrite_unlock_irq(&tasklist_lock);
 
 	return 0;
 }
@@ -177,8 +177,7 @@ static void task_update_object(struct task_kddm_object *obj)
 		obj->egid = cred->egid;
 		rcu_read_unlock();
 
-		obj->utime = task_utime(tsk);
-		obj->stime = task_stime(tsk);
+		task_cputime(tsk, &obj->utime, &obj->stime);
 
 		obj->dumpable = (tsk->mm && get_dumpable(tsk->mm) == 1);
 
@@ -195,14 +194,14 @@ static int task_export_object(struct rpc_desc *desc,
 	struct task_kddm_object *src = obj_entry->object;
 	struct task_struct *tsk;
 
-	read_lock(&tasklist_lock);
+	qread_lock(&tasklist_lock);
 	tsk = src->task;
 	if (likely(tsk)) {
 		task_lock(tsk);
 		task_update_object(src);
 		task_unlock(tsk);
 	}
-	read_unlock(&tasklist_lock);
+	qread_unlock(&tasklist_lock);
 
 	return rpc_pack_type(desc, *src);
 }
@@ -344,9 +343,9 @@ void __krg_task_unlink(struct task_kddm_object *obj, int need_update)
 
 void krg_task_unlink(struct task_kddm_object *obj, int need_update)
 {
-	write_lock_irq(&tasklist_lock);
+	qwrite_lock_irq(&tasklist_lock);
 	__krg_task_unlink(obj, need_update);
-	write_unlock_irq(&tasklist_lock);
+	qwrite_unlock_irq(&tasklist_lock);
 }
 
 int krg_task_alive(struct task_kddm_object *obj)
